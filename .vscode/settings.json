@@ -1,0 +1,15 @@
+{
+    "[svelte]": {},
+    "files.associations": {
+        "*.css": "tailwindcss"
+    },
+    "editor.quickSuggestions": {
+        "strings": true
+    },
+    "files.exclude": {
+        "node_modules/": true,
+        "dist": true,
+        "src-tauri/target": true,
+        "yarn.lock": true,
+    }
+}
