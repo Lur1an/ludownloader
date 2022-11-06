@@ -7,11 +7,11 @@
       {
         "type": "lldb",
         "request": "launch",
-        "name": "Tauri Development Debug",
+        "name": "Tauri Development Rust Debug",
         "cargo": {
           "args": [
             "build",
-            "--manifest-path=./src-tauri/Cargo.toml",
+            "--manifest-path=${workspaceFolder}/app/src-tauri/Cargo.toml",
             "--no-default-features"
           ]
         },
@@ -21,9 +21,9 @@
       {
         "type": "lldb",
         "request": "launch",
-        "name": "Tauri Production Debug",
+        "name": "Tauri Production Rust Debug",
         "cargo": {
-          "args": ["build", "--release", "--manifest-path=./src-tauri/Cargo.toml"]
+          "args": ["build", "--release", "--manifest-path=${workspaceFolder}/app/src-tauri/Cargo.toml"]
         },
         // task for the `beforeBuildCommand` if used, must be configured in `.vscode/tasks.json`
         "preLaunchTask": "ui:build"

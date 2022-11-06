@@ -7,9 +7,9 @@
         "strings": true
     },
     "files.exclude": {
-        "node_modules/": true,
-        "dist": true,
-        "src-tauri/target": true,
-        "yarn.lock": true,
-    }
+        "**/node_modules/": true,
+        "**/dist": true,
+        "**/target": true
+    },
+    "rust-analyzer.linkedProjects": ["app/src-tauri/Cargo.toml", "downloader/Cargo.toml"]
 }
