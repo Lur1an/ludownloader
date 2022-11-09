@@ -1,11 +1,13 @@
+use std::fmt::Error;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use std::time::Duration;
+use log;
 use std::{fs::File, io::Write};
 
 use futures_util::StreamExt;
-use reqwest::header::{self, HeaderMap, HeaderValue};
+use reqwest::header::{self, HeaderMap, HeaderValue, HeaderName};
 use reqwest::{Client, Url};
 
 struct Package {
@@ -20,7 +22,6 @@ impl Package {
 
 #[derive(Debug, Clone)]
 struct HttpDownload {
-
     /**
      * Url of the download
      */
@@ -41,11 +42,73 @@ struct HttpDownload {
      * Currently used HttpClient
      */
     client: Client,
+    ongoing: bool,
+    content_length: u64
+}
+
+impl HttpDownload {
+    /**
+     * Initializes a new HttpDownload.
+     * file_path needs to be computed beforehand, it's not a responsibility of the Download.
+     */
+    fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Self {
+        // If no configuration is passed the default one is copied
+        let config = config.unwrap_or_else(|| HttpDownloadConfig::default());
+        HttpDownload {
+            url,
+            file_path,
+            config,
+            tries: 0,
+            client: Client::new(),
+            ongoing: false,
+            content_length: 0
+        }
+    }
+
+    fn start(&self) {
+
+    }
+
+    fn pause(&self) {
+    
+    }
+
+    async fn download(&self) -> Result<(), reqwest::Error> {
+        let resp = self
+            .client
+            .get(self.url.as_ref())
+            .timeout(self.config.timeout)
+            .headers(self.config.headers.clone())
+            .send()
+            .await?;
+        Ok(())
+    }
+    async fn prepare_headers(&self) {
+        log::info!("preparing headers for download");
+        let server_headers = self.get_server_headers();
+    }
+    /**
+     * Requests headers from server of Download 
+     */
+    async fn get_server_headers(&self) -> Result<HeaderMap, reqwest::Error>{
+        let response = self
+            .client
+            .get(self.url.as_ref())
+            .timeout(self.config.timeout)
+            .header(header::ACCEPT, HeaderValue::from_str("*/*").unwrap())
+            .header(
+                header::USER_AGENT,
+                self.config.headers.get(header::USER_AGENT).unwrap(),
+            )
+            .send()
+            .await?;
+        Ok(response.headers().clone())
+    }
 }
 
 /**
- * Holds the http configuration for the Download
- */
+Holds the http configuration for the Download
+*/
 #[derive(Debug, Clone)]
 struct HttpDownloadConfig {
     /**
@@ -67,12 +130,12 @@ const DEFAULT_USER_AGENT: &str = "ludownloader";
 
 impl HttpDownloadConfig {
     /**
-     * Creates a default set of settings.
-     * max_retries: 100
-     * headers: { user-agent: "ludownloader" }
-     * num_workers: 8
-     * timeout: 30s
-     */
+    Creates a default set of settings.
+    * max_retries: 100
+    * headers: { user-agent: "ludownloader" }
+    * num_workers: 8
+    * timeout: 30s
+    */
     fn default() -> Self {
         let mut config = HttpDownloadConfig {
             max_retries: 100,
@@ -120,32 +183,6 @@ fn file_size(fpath: &Path) -> u64 {
     match fs::metadata(fpath) {
         Ok(metadata) => metadata.len(),
         _ => 0,
-    }
-}
-
-impl HttpDownload {
-    fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Self {
-        // If no configuration is passed the default one is copied
-        let config = config.unwrap_or_else(|| HttpDownloadConfig::default());
-        HttpDownload {
-            url,
-            file_path,
-            config,
-            tries: 0,
-            client: Client::new(),
-        }
-    }
-
-    async fn download(&self) -> Result<(), String> {
-        let resp = self
-            .client
-            .get(self.url.as_ref())
-            .timeout(self.config.timeout)
-            .headers(self.config.headers.clone())
-            .send()
-            .await
-            .or(Err("Failed"));
-        Ok(())
     }
 }
 
@@ -201,17 +238,28 @@ mod test {
 
     #[test]
     fn download_execution_test() -> Test {
-        let tmp_dir = TempDir::new()?.into_path();
-        let test_file_url = "https://speed.hetzner.de/1GB.bin";
-        let url = Url::parse(test_file_url)?;
-        let filename = parse_filename(&url).unwrap();
-        let file_path = tmp_dir.join(Path::new(filename));
-        let mut file_handler = File::create(&file_path).unwrap();
+        let tmp_dir = TempDir::new()?;
+        let tmp_path = tmp_dir.path();
+        let url = Url::parse("https://speed.hetzner.de/1GB.bin")?;
+        let fname = parse_filename(&url).unwrap();
+        let fpath = tmp_path.join(Path::new(fname));
+        let mut file_handler = File::create(&fpath).unwrap();
         assert_eq!(
-            file_size(file_path.as_path()),
+            file_size(fpath.as_path()),
             0,
             "Newly created file should have 0 Bytes!"
         );
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn get_server_headers_test() -> Test {
+        let url = Url::parse("https://speed.hetzner.de/1GB.bin")?;
+        let file_path = PathBuf::from("tmp/ludownloader/1GB.bin");
+        let download = HttpDownload::new(url, file_path, None);
+        let download_headers = download.get_server_headers().await;
+        assert!(download_headers.is_ok());
+        println!("{:?}", download_headers);
+        return Ok(())
     }
 }

@@ -1490,6 +1490,7 @@ name = "ludownloader"
 version = "0.0.0"
 dependencies = [
  "downloader",
+ "log",
  "serde",
  "serde_json",
  "tauri",
