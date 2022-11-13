@@ -1,35 +1,28 @@
-use std::fmt::Error;
-use std::fs;
+use std::fs::{self, File};
 use std::path::{Path, PathBuf};
 
-use std::time::Duration;
+use futures::FutureExt;
 use log;
-use std::{fs::File, io::Write};
+use std::io::Write;
+use std::time::Duration;
 
 use futures_util::StreamExt;
-use reqwest::header::{self, HeaderMap, HeaderValue, HeaderName};
-use reqwest::{Client, Url};
+use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
+use reqwest::{Url, Client};
 
-struct Package {
-    downloads: Vec<HttpDownload>,
-    root_folder: PathBuf,
-    package_name: String,
-}
+const DEFAULT_USER_AGENT: &str = "ludownloader";
 
-impl Package {
-    fn add_download(download: HttpDownload) {}
-}
-
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct HttpDownload {
     /**
-     * Url of the download
+     * Download Link\
      */
     url: Url,
     /**
      * Target file for the download
      */
     file_path: PathBuf,
+    file_handler: Option<File>,
     /**
      * Amount of current retries
      */
@@ -43,63 +36,118 @@ struct HttpDownload {
      */
     client: Client,
     ongoing: bool,
-    content_length: u64
+    /**
+     * Size of the download in bytes
+     */
+    content_length: u64,
+    /**
+     Amount of bytes downloaded, aka size of the file found at file_path.
+    * This value is calculated in case the download is started with resume() and is then updated for every downloaded chunk.
+    */
+    downloaded_bytes: u64,
+    /**
+    If the server for the Download supports bytes
+    * This value get's updated on start()
+    */
+    supports_bytes: bool,
 }
 
 impl HttpDownload {
     /**
-     * Initializes a new HttpDownload.
-     * file_path needs to be computed beforehand, it's not a responsibility of the Download.
-     */
-    fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Self {
+       Initializes a new HttpDownload.
+    * file_path: Path to the file, doesn't matter if it exists already.
+    * config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+    */
+    pub fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Self {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_else(|| HttpDownloadConfig::default());
-        HttpDownload {
+        let downloaded_bytes = file_size(&file_path);
+        let download = HttpDownload {
             url,
             file_path,
             config,
+            downloaded_bytes,
+            file_handler: None,
+            supports_bytes: false,
             tries: 0,
             client: Client::new(),
             ongoing: false,
-            content_length: 0
-        }
+            content_length: 0u64,
+        };
+        return download;
     }
 
-    fn start(&self) {
-
-    }
-
-    fn pause(&self) {
-    
-    }
-
-    async fn download(&self) -> Result<(), reqwest::Error> {
+    /**
+     * Starts the Download from scratch
+     * If file_handler is None : Opens file handler in write
+     */
+    pub async fn start(&mut self) -> Result<(), String> {
+        // Send the friggin request
         let resp = self
             .client
             .get(self.url.as_ref())
             .timeout(self.config.timeout)
             .headers(self.config.headers.clone())
-            .send()
-            .await?;
+            .send();
+        // Open the file
+        let file_handler: File;
+        match File::create(&self.file_path) {
+            Ok(f) => file_handler = f,
+            Err(err) => {
+                return Err(format!(
+                    "Failed creating/opening File for HttpDownload. path: {:?}, error: {:?}",
+                    self.file_path, err
+                ))
+            }
+        };
+        self.file_handler = Some(file_handler);
+        // Await the response
+        let resp = resp.await.or(Err(format!(
+            "Failed to send GET from: '{}'",
+            self.url.as_str()
+        )))?;
+        // Get content-length
+        // self.content_length = resp.content_length().ok_or(Err(format!(
+        //     "Failed to get content length from: '{}'",
+        //     self.url.as_str()
+        // )));
+        // Download data
+        let buffer_size = self.config.chunk_size as u64;
         Ok(())
     }
-    async fn prepare_headers(&self) {
-        log::info!("preparing headers for download");
-        let server_headers = self.get_server_headers();
-    }
     /**
-     * Requests headers from server of Download 
+     * Pauses the download
      */
-    async fn get_server_headers(&self) -> Result<HeaderMap, reqwest::Error>{
+    pub fn pause(&mut self) {}
+
+    /**
+     * Tries to resume the download
+     * If file_handler is None : Opens file handler in append
+     */
+    pub fn resume(&mut self) {}
+
+    /**
+     * Queries the server to check if the download supports Bytes, then updates the field of the struct with the result.
+     * This function doesn't fail or return errors, on worst case nothing happens and self.supports_bytes remains unchanged
+     */
+    async fn update_supports_bytes(&mut self) {
+        self.get_server_headers()
+            .await
+            .ok()
+            .and_then(|headers| Some(supports_bytes(&headers)))
+            .and_then(|support| Some(self.supports_bytes = support));
+    }
+
+    /**
+     * Requests headers from server of this Download
+     */
+    async fn get_server_headers(&self) -> Result<HeaderMap, reqwest::Error> {
         let response = self
             .client
             .get(self.url.as_ref())
             .timeout(self.config.timeout)
             .header(header::ACCEPT, HeaderValue::from_str("*/*").unwrap())
-            .header(
-                header::USER_AGENT,
-                self.config.headers.get(header::USER_AGENT).unwrap(),
-            )
+            .headers(self.config.headers.clone())
             .send()
             .await?;
         Ok(response.headers().clone())
@@ -124,9 +172,8 @@ struct HttpDownloadConfig {
      * Request headers for the Download
      */
     headers: HeaderMap,
+    chunk_size: u64,
 }
-
-const DEFAULT_USER_AGENT: &str = "ludownloader";
 
 impl HttpDownloadConfig {
     /**
@@ -140,8 +187,9 @@ impl HttpDownloadConfig {
         let mut config = HttpDownloadConfig {
             max_retries: 100,
             timeout: Duration::from_secs(30),
-            num_workers: 8usize,
+            num_workers: 8,
             headers: HeaderMap::new(),
+            chunk_size: 512_000u64,
         };
         config.headers.insert(
             header::USER_AGENT,
@@ -155,7 +203,7 @@ impl HttpDownloadConfig {
  * Parses the filename from the download URL
  * Returns None if there is no filename or if url.path_segments() fails
  */
-fn parse_filename(url: &Url) -> Option<&str> {
+pub fn parse_filename(url: &Url) -> Option<&str> {
     let segments = url.path_segments()?;
     let filename = segments.last()?;
     if filename.is_empty() {
@@ -168,40 +216,22 @@ fn parse_filename(url: &Url) -> Option<&str> {
 /**
  * Given a HeaderMap checks if the server that sent the headers supports byte ranges
  */
-fn supports_bytes(headers: &HeaderMap) -> bool {
-    match headers.get(header::ACCEPT_RANGES) {
-        Some(val) => val == "bytes",
-        None => false,
+pub fn supports_bytes(headers: &HeaderMap) -> bool {
+    if let Some(val) = headers.get(header::ACCEPT_RANGES) {
+        return val == "bytes";
     }
+    return false;
 }
 
 /**
  * Tries to extract file size from given Path
  * If the Path is wrong or the metadata read operation fails the function returns 0
  */
-fn file_size(fpath: &Path) -> u64 {
+pub fn file_size(fpath: &Path) -> u64 {
     match fs::metadata(fpath) {
         Ok(metadata) => metadata.len(),
         _ => 0,
     }
-}
-
-async fn download_big_file() -> Result<(), reqwest::Error> {
-    let client = Client::new();
-    let url = Url::parse("https://example.net");
-
-    let file_url = "https://speed.hetzner.de/1GB.bin";
-    let response = client.get(file_url).send().await?;
-
-    let mut stream = response.bytes_stream();
-    let mut file: File = File::create("/tmp/testfile").expect("Failed creating file");
-
-    while let Some(item) = stream.next().await {
-        let chunk = item.or(Err("Error while downloading chunk")).unwrap();
-        file.write(&chunk).expect("Writing ok");
-    }
-    file.flush().expect("Writing ok");
-    return Ok(());
 }
 
 #[cfg(test)]
@@ -215,6 +245,28 @@ mod test {
      * Type definition for tests to enable unchecked '?' syntax
      */
     type Test = Result<(), Box<dyn Error>>;
+
+    fn supports_bytes_test() {
+        let mut headermap = HeaderMap::new();
+
+        headermap.insert(
+            header::ACCEPT_RANGES,
+            HeaderValue::from_str("bytes").unwrap(),
+        );
+        assert!(
+            supports_bytes(&headermap),
+            "HeaderMap should support bytes!"
+        );
+
+        headermap.insert(
+            header::ACCEPT_RANGES,
+            HeaderValue::from_str("something else").unwrap(),
+        );
+        assert!(
+            !supports_bytes(&headermap),
+            "HeaderMap shouldn't support bytes anymore!"
+        );
+    }
 
     #[test]
     fn parse_filename_success_test() -> Test {
@@ -237,17 +289,29 @@ mod test {
     }
 
     #[test]
-    fn download_execution_test() -> Test {
+    fn file_size_retrieval_test() -> Test {
+        // Setup
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
         let url = Url::parse("https://speed.hetzner.de/1GB.bin")?;
         let fname = parse_filename(&url).unwrap();
         let fpath = tmp_path.join(Path::new(fname));
+        // Create file and check that it's empty (size == 0)
         let mut file_handler = File::create(&fpath).unwrap();
         assert_eq!(
             file_size(fpath.as_path()),
             0,
             "Newly created file should have 0 Bytes!"
+        );
+        // Write some bytes to the buffer
+        let bytes: u64 = file_handler.write(b"b")? as u64;
+        // Flush the buffer to the file
+        file_handler.flush()?;
+        // Assert that the file_size function retrieves the exact number of bytes written
+        assert_eq!(
+            file_size(fpath.as_path()),
+            bytes,
+            "File should have as many bytes as written in the buffer!"
         );
         Ok(())
     }
@@ -259,7 +323,16 @@ mod test {
         let download = HttpDownload::new(url, file_path, None);
         let download_headers = download.get_server_headers().await;
         assert!(download_headers.is_ok());
-        println!("{:?}", download_headers);
-        return Ok(())
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn update_supports_bytes_test() -> Test {
+        let url = Url::parse("https://speed.hetzner.de/1GB.bin")?;
+        let file_path = PathBuf::from("tmp/ludownloader/1GB.bin");
+        let mut download = HttpDownload::new(url, file_path, None);
+        download.update_supports_bytes().await;
+        assert!(download.supports_bytes);
+        Ok(())
     }
 }
