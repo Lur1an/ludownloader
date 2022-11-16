@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use futures_util::StreamExt;
 use reqwest::header::{self, HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Url, Client};
+use reqwest::{Client, Url};
 
 const DEFAULT_USER_AGENT: &str = "ludownloader";
 
@@ -53,11 +53,10 @@ struct HttpDownload {
 }
 
 impl HttpDownload {
-    /**
-       Initializes a new HttpDownload.
-    * file_path: Path to the file, doesn't matter if it exists already.
-    * config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
-    */
+    /** Initializes a new HttpDownload.
+     * file_path: Path to the file, doesn't matter if it exists already.
+     * config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+     */
     pub fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Self {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_else(|| HttpDownloadConfig::default());
@@ -92,7 +91,9 @@ impl HttpDownload {
         // Open the file
         let file_handler: File;
         match File::create(&self.file_path) {
+            
             Ok(f) => file_handler = f,
+
             Err(err) => {
                 return Err(format!(
                     "Failed creating/opening File for HttpDownload. path: {:?}, error: {:?}",
@@ -112,7 +113,7 @@ impl HttpDownload {
         //     self.url.as_str()
         // )));
         // Download data
-        let buffer_size = self.config.chunk_size as u64;
+        let buffer_size = self.config.chunk_size as usize;
         Ok(())
     }
     /**
@@ -127,30 +128,36 @@ impl HttpDownload {
     pub fn resume(&mut self) {}
 
     /**
-     * Queries the server to check if the download supports Bytes, then updates the field of the struct with the result.
-     * This function doesn't fail or return errors, on worst case nothing happens and self.supports_bytes remains unchanged
-     */
-    async fn update_supports_bytes(&mut self) {
-        self.get_server_headers()
-            .await
-            .ok()
-            .and_then(|headers| Some(supports_bytes(&headers)))
-            .and_then(|support| Some(self.supports_bytes = support));
-    }
-
-    /**
-     * Requests headers from server of this Download
-     */
-    async fn get_server_headers(&self) -> Result<HeaderMap, reqwest::Error> {
+    Queries the server to update some Download data.
+    * updates content_length
+    * updates accepts_bytes
+    * This function doesn't fail or return errors, on worst case nothing happens
+    */
+    async fn update_server_data(&mut self) -> Result<(), String> {
         let response = self
             .client
             .get(self.url.as_ref())
             .timeout(self.config.timeout)
-            .header(header::ACCEPT, HeaderValue::from_str("*/*").unwrap())
-            .headers(self.config.headers.clone())
             .send()
-            .await?;
-        Ok(response.headers().clone())
+            .await
+            .map_err(|err| {
+                format!(
+                    "Couldn't execute Head request! url: {:?}, error: {:#?}",
+                    self.url.as_str(),
+                    err
+                )
+            })?;
+        match response.content_length() {
+            Some(val) => self.content_length = val,
+            None => {
+                return Err(format!(
+                    "Couldn't get content_length from: {:?}",
+                    self.url.as_str()
+                ))
+            }
+        }
+        self.supports_bytes = supports_bytes(response.headers());
+        Ok(())
     }
 }
 
@@ -224,7 +231,7 @@ pub fn supports_bytes(headers: &HeaderMap) -> bool {
 }
 
 /**
- * Tries to extract file size from given Path
+ * Tries to extract file size in bytes from given Path
  * If the Path is wrong or the metadata read operation fails the function returns 0
  */
 pub fn file_size(fpath: &Path) -> u64 {
@@ -238,6 +245,7 @@ pub fn file_size(fpath: &Path) -> u64 {
 mod test {
     use super::*;
     use pretty_assertions::{assert_eq, assert_ne};
+
     use std::error::Error;
     use tempfile::TempDir;
 
@@ -246,22 +254,26 @@ mod test {
      */
     type Test = Result<(), Box<dyn Error>>;
 
+    #[test]
     fn supports_bytes_test() {
+        // Given
         let mut headermap = HeaderMap::new();
-
+        // When
         headermap.insert(
             header::ACCEPT_RANGES,
             HeaderValue::from_str("bytes").unwrap(),
         );
+        // Then
         assert!(
             supports_bytes(&headermap),
             "HeaderMap should support bytes!"
         );
-
+        // When
         headermap.insert(
             header::ACCEPT_RANGES,
             HeaderValue::from_str("something else").unwrap(),
         );
+        // Then
         assert!(
             !supports_bytes(&headermap),
             "HeaderMap shouldn't support bytes anymore!"
@@ -317,22 +329,20 @@ mod test {
     }
 
     #[tokio::test]
-    async fn get_server_headers_test() -> Test {
-        let url = Url::parse("https://speed.hetzner.de/1GB.bin")?;
-        let file_path = PathBuf::from("tmp/ludownloader/1GB.bin");
-        let download = HttpDownload::new(url, file_path, None);
-        let download_headers = download.get_server_headers().await;
-        assert!(download_headers.is_ok());
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn update_supports_bytes_test() -> Test {
-        let url = Url::parse("https://speed.hetzner.de/1GB.bin")?;
-        let file_path = PathBuf::from("tmp/ludownloader/1GB.bin");
+    async fn update_server_data_test() -> Test {
+        // given
+        let url_str = "https://speed.hetzner.de/10GB.bin";
+        let url = Url::parse(url_str)?;
+        let file_path = PathBuf::from(parse_filename(&url).unwrap());
         let mut download = HttpDownload::new(url, file_path, None);
-        download.update_supports_bytes().await;
-        assert!(download.supports_bytes);
+        // when
+        download.update_server_data().await?;
+        // then
+        assert!(download.supports_bytes, "Server should support bytes!");
+        assert_eq!(
+            download.content_length, 10485760000,
+            "content-length should be exactly the same as always for the 10GB file"
+        );
         Ok(())
     }
 }
