@@ -7,7 +7,6 @@
 #[tauri::command]
 fn greet(name: &str) -> String {
     let msg = format!("Greetings {}!", name);
-    println!("{}", msg);
     return msg;
     
 }
