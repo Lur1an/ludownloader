@@ -336,9 +336,12 @@ mod test {
     #[tokio::test]
     async fn start_download_test() -> Test {
         // given
+        let tmp_dir = TempDir::new()?;
+        let tmp_path = tmp_dir.path();
+        // and
         let url_str = "https://speed.hetzner.de/1GB.bin";
         let url = Url::parse(url_str)?;
-        let file_path = PathBuf::from(parse_filename(&url).unwrap());
+        let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
         let mut download = HttpDownload::new(url, file_path, None);
         // when
         download.start().await?;
