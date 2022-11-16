@@ -15,14 +15,13 @@ const DEFAULT_USER_AGENT: &str = "ludownloader";
 #[derive(Debug)]
 struct HttpDownload {
     /**
-     * Download Link\
+     * Download Link
      */
     url: Url,
     /**
      * Target file for the download
      */
     file_path: PathBuf,
-    file_handler: Option<File>,
     /**
      * Amount of current retries
      */
@@ -66,7 +65,6 @@ impl HttpDownload {
             file_path,
             config,
             downloaded_bytes,
-            file_handler: None,
             supports_bytes: false,
             tries: 0,
             client: Client::new(),
@@ -78,9 +76,9 @@ impl HttpDownload {
 
     /**
      * Starts the Download from scratch
-     * If file_handler is None : Opens file handler in write
      */
     pub async fn start(&mut self) -> Result<(), String> {
+        self.update_server_data().await?;
         // Send the friggin request
         let resp = self
             .client
@@ -89,31 +87,21 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send();
         // Open the file
-        let file_handler: File;
-        match File::create(&self.file_path) {
-            
-            Ok(f) => file_handler = f,
-
-            Err(err) => {
-                return Err(format!(
-                    "Failed creating/opening File for HttpDownload. path: {:?}, error: {:?}",
-                    self.file_path, err
-                ))
-            }
-        };
-        self.file_handler = Some(file_handler);
-        // Await the response
+        let mut file_handler = File::create(&self.file_path).or(Err(format!(
+            "Failed creating/opening File for HttpDownload. path: {:?}",
+            self.file_path
+        )))?;
+        // Await the response, raise error with String msg otherwise
         let resp = resp.await.or(Err(format!(
-            "Failed to send GET from: '{}'",
+            "Failed to send GET to: '{}'",
             self.url.as_str()
         )))?;
-        // Get content-length
-        // self.content_length = resp.content_length().ok_or(Err(format!(
-        //     "Failed to get content length from: '{}'",
-        //     self.url.as_str()
-        // )));
-        // Download data
-        let buffer_size = self.config.chunk_size as usize;
+        let mut stream = resp.bytes_stream();
+        while let Some(item) = stream.next().await {
+            let chunk = item.or(Err(format!("Error while downloading file from url: {:?}", self.url)))?;
+            file_handler.write_all(&chunk)
+                .or(Err(format!("Error while writing to file")))?;
+        }
         Ok(())
     }
     /**
@@ -123,7 +111,6 @@ impl HttpDownload {
 
     /**
      * Tries to resume the download
-     * If file_handler is None : Opens file handler in append
      */
     pub fn resume(&mut self) {}
 
@@ -321,7 +308,7 @@ mod test {
         file_handler.flush()?;
         // Assert that the file_size function retrieves the exact number of bytes written
         assert_eq!(
-            file_size(fpath.as_path()),
+            file_size(&fpath),
             bytes,
             "File should have as many bytes as written in the buffer!"
         );
@@ -343,6 +330,25 @@ mod test {
             download.content_length, 10485760000,
             "content-length should be exactly the same as always for the 10GB file"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn start_download_test() -> Test {
+        // given
+        let url_str = "https://speed.hetzner.de/1GB.bin";
+        let url = Url::parse(url_str)?;
+        let file_path = PathBuf::from(parse_filename(&url).unwrap());
+        let mut download = HttpDownload::new(url, file_path, None);
+        // when
+        download.start().await?;
+        // then
+        assert_eq!(
+            download.content_length,
+            file_size(&download.file_path),
+            "File size should be equal to content_length"
+        );
+
         Ok(())
     }
 }
