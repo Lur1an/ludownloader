@@ -11,6 +11,7 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 async fn quick_download(url: &str) -> Result<String, String> {
+    println!("Download started");
     match downloader::quick_download(url).await {
         Ok(_) => Ok(String::from("SUCCESS")),
         Err(err) => Err(format!("Download failed: {:?}", err))
