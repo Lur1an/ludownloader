@@ -373,7 +373,7 @@ mod test {
         Ok(())
     }
 
-    
+    #[ignore]
     #[tokio::test]
     async fn quick_download_test() -> Test {
         // given
