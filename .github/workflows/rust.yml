@@ -12,10 +12,12 @@ env:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
     - uses: actions/checkout@v3
-    - name: Build
+    
+    - name: Build Downloader
+      working-directory: ./downloader
       run: cargo build --verbose
     - name: Run tests
+      working-directory: ./downloader
       run: cargo test --verbose

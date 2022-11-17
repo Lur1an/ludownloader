@@ -99,10 +99,10 @@ impl HttpDownload {
         )))?;
         let mut stream = resp.bytes_stream();
         while let Some(item) = stream.next().await {
-            let chunk = item.or(Err(format!(
-                "Error while downloading file from url: {:?}",
-                self.url
-            )))?;
+            let chunk = item.map_err(|e| format!(
+                "Error while downloading file from url: {:#?}. Error: {:#?}",
+                self.url, e
+            ))?;
             file_handler
                 .write_all(&chunk)
                 .or(Err(format!("Error while writing to file")))?;
@@ -198,8 +198,8 @@ impl HttpDownloadConfig {
     }
 }
 
-pub async fn direct_download(url: &str) -> Result<(), String> {
-    let url = Url::parse(url).map_err(|e| "Failed parsing the url")?;
+pub async fn quick_download(url: &str) -> Result<(), String> {
+    let url = Url::parse(url).map_err(|e| format!("Failed parsing the url: {:?}", e))?;
     let fname = PathBuf::from(parse_filename(&url).ok_or("Couldn't get a filename from the url")?);
 
     let fpath;
@@ -254,7 +254,7 @@ pub fn file_size(fpath: &Path) -> u64 {
 #[cfg(test)]
 mod test {
     use super::*;
-    use pretty_assertions::{assert_eq, assert_ne};
+    use pretty_assertions::{assert_eq};
 
     use std::error::Error;
     use tempfile::TempDir;
@@ -302,11 +302,6 @@ mod test {
     fn parse_filename_failure_test() -> Test {
         let url = Url::parse("https://somewebsite.biz/")?;
         assert!(parse_filename(&url).is_none());
-        Ok(())
-    }
-
-    #[test]
-    fn download_setup_test() -> Test {
         Ok(())
     }
 
@@ -362,7 +357,7 @@ mod test {
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
         // and
-        let url_str = "https://speed.hetzner.de/1GB.bin";
+        let url_str = "https://github.com/yourkin/fileupload-fastapi/raw/a85a697cab2f887780b3278059a0dd52847d80f3/tests/data/test-10mb.bin";
         let url = Url::parse(url_str)?;
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
         let mut download = HttpDownload::new(url, file_path, None);
@@ -378,17 +373,18 @@ mod test {
         Ok(())
     }
 
+    
     #[tokio::test]
-    async fn direct_download_test() -> Test {
+    async fn quick_download_test() -> Test {
         // given
-        let url_str = "https://speed.hetzner.de/1GB.bin";
+        let url_str = "https://github.com/yourkin/fileupload-fastapi/raw/a85a697cab2f887780b3278059a0dd52847d80f3/tests/data/test-10mb.bin";
         let url = Url::parse(url_str)?;
         let user_dirs = UserDirs::new().unwrap();
         let download_dir = user_dirs.download_dir().unwrap();
         let filename = parse_filename(&url).unwrap();
         let expected_download_path = download_dir.join(filename);
         // when
-        direct_download(url_str).await?;
+        quick_download(url_str).await?;
         // then
         assert!(file_size(&expected_download_path) != 0);
         fs::remove_file(expected_download_path)?;
