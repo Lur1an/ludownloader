@@ -11,6 +11,13 @@ fn greet(name: &str) -> String {
     
 }
 
+#[tauri::command]
+fn direct_download(url: &str) -> Result<String, String> {
+    match downloader::direct_download(url) {
+
+    };
+}
+
 fn main() {
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![greet])
