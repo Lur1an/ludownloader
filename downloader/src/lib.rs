@@ -291,15 +291,12 @@ mod test {
     }
 
     #[test]
-    fn parse_filename_success_test() -> Test {
+    fn parse_filename_test() -> Test {
+        // Test success
         let url = Url::parse("https://somewebsite.biz/api/v1/big-ass-file.fantasy")?;
         let filename = parse_filename(&url).unwrap();
         assert_eq!(filename, "big-ass-file.fantasy", "File name doesn't match!");
-        Ok(())
-    }
-
-    #[test]
-    fn parse_filename_failure_test() -> Test {
+        // Test failure
         let url = Url::parse("https://somewebsite.biz/")?;
         assert!(parse_filename(&url).is_none());
         Ok(())
