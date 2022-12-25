@@ -15,7 +15,6 @@ use crate::constants::DEFAULT_USER_AGENT;
 use crate::util::{file_size, parse_filename};
 use crate::util;
 
-#[derive(Debug)]
 pub struct HttpDownload {
     /**
      * Download Link
@@ -53,12 +52,17 @@ pub struct HttpDownload {
     * This value get's updated on start()
      */
     supports_byte_ranges: bool,
+    /**
+     * This function is called every time there is an update to the download progress
+     * the float passed is a value between 0 and 1 representing the progress on the download
+     */
+    on_update: Option<Box<dyn FnMut(f32) -> () + Send>>,
 }
 
 impl HttpDownload {
     /** Initializes a new HttpDownload.
-           * file_path: Path to the file, doesn't matter if it exists already.
-           * config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+                                * file_path: Path to the file, doesn't matter if it exists already.
+                                * config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Result<Self, String> {
         // If no configuration is passed the default one is copied
@@ -75,6 +79,7 @@ impl HttpDownload {
             paused: Arc::new(Mutex::new(true)),
             complete: false,
             content_length: 0u64,
+            on_update: None,
         };
         download.update_server_data().await?;
         return Ok(download);
@@ -101,18 +106,34 @@ impl HttpDownload {
             "Failed to send GET to: '{}'",
             self.url.as_str()
         )))?;
-        let mut stream = resp.bytes_stream();
-        // let chunked_stream = stream.chunks(10 * 1024 * 1024);
-        // chunked_stream.next()
-        while let Some(item) = stream.next().await {
-            let chunk = item.map_err(|e| format!(
-                "Error while downloading file from url: {:#?}. Error: {:#?}",
-                self.url, e
-            ))?;
-            file_handler
-                .write_all(&chunk)
-                .or(Err(format!("Error while writing to file at {:?}", self.file_path)))?;
+
+        if let Some(chunk_size) = self.config.chunk_size {
+            // Chunked download
+            let mut stream = resp.bytes_stream().chunks(chunk_size);
+            while let Some(buffered_chunks) = stream.next().await {
+                for result in buffered_chunks {
+                    match result {
+                        Ok(chunk) => self.downloaded_bytes += file_handler.write(&chunk)
+                            .or(Err(format!("Error while writing to file at {:?}", self.file_path)))? as u64,
+                        Err(e) => return Err(format!("Error while chunking download response. Error: {:?}", e)),
+                    }
+                }
+            }
+        } else {
+            let mut stream = resp.bytes_stream();
+            while let Some(item) = stream.next().await {
+                let chunk = item.map_err(|e| format!(
+                    "Error while downloading file from url: {:#?}. Error: {:#?}",
+                    self.url, e
+                ))?;
+                self.downloaded_bytes += file_handler
+                    .write(&chunk)
+                    .or(Err(format!("Error while writing to file at {:?}", self.file_path)))? as u64;
+            }
         }
+        // chunked_stream.next()
+
+        self.complete = true;
         Ok(())
     }
     /**
@@ -173,15 +194,15 @@ pub struct HttpDownloadConfig {
      */
     timeout: Duration,
     /**
-    * Number of threads that can concurrently handle this download, ignored
-    * if the server doesn't support http ranges
-    */
+     * Number of threads that can concurrently handle this download, ignored
+     * if the server doesn't support http ranges
+     */
     num_workers: usize,
     /**
      * Request headers for the Download
      */
     headers: HeaderMap,
-    chunk_size: u64,
+    chunk_size: Option<usize>,
 }
 
 impl HttpDownloadConfig {
@@ -198,7 +219,7 @@ impl HttpDownloadConfig {
             timeout: Duration::from_secs(60),
             num_workers: 8,
             headers: HeaderMap::new(),
-            chunk_size: 512_000u64,
+            chunk_size: None,
         };
         config.headers.insert(
             header::USER_AGENT,
@@ -236,7 +257,7 @@ mod test {
     use super::*;
 
     #[tokio::test]
-    async fn update_server_data_test() -> Result<(), Box<dyn Error>> {
+    async fn server_data_is_requested_on_create_test() -> Result<(), Box<dyn Error>> {
         // given
         let url_str = "https://speed.hetzner.de/10GB.bin";
         let url = Url::parse(url_str)?;
@@ -253,7 +274,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn start_download_test() -> Result<(), Box<dyn Error>> {
+    async fn default_download_no_chunks_test() -> Result<(), Box<dyn Error>> {
         // given
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
@@ -269,6 +290,46 @@ mod test {
             download.content_length,
             file_size(&download.file_path),
             "File size should be equal to content_length"
+        );
+        assert_eq!(
+            download.downloaded_bytes,
+            download.content_length,
+            "The downloaded bytes need to be equal to the content_length when the download is finished"
+        );
+        assert!(
+            download.complete, "Download should know that it's complete and expose this through the API"
+        );
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn download_with_chunksize_test() -> Result<(), Box<dyn Error>> {
+        // given
+        let tmp_dir = TempDir::new()?;
+        let tmp_path = tmp_dir.path();
+        // and
+        let url_str = "https://github.com/yourkin/fileupload-fastapi/raw/a85a697cab2f887780b3278059a0dd52847d80f3/tests/data/test-10mb.bin";
+        let url = Url::parse(url_str)?;
+        let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
+        let mut config = HttpDownloadConfig::default();
+        config.chunk_size = Some(536870912);
+        let mut download = HttpDownload::new(url, file_path, None).await?;
+        // when
+        download.start().await?;
+        // then
+        assert_eq!(
+            download.content_length,
+            file_size(&download.file_path),
+            "File size should be equal to content_length"
+        );
+        assert_eq!(
+            download.downloaded_bytes,
+            download.content_length,
+            "The downloaded bytes need to be equal to the content_length when the download is finished"
+        );
+        assert!(
+            download.complete, "Download should know that it's complete and expose this through the API"
         );
 
         Ok(())
