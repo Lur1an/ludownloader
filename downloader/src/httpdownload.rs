@@ -1,5 +1,7 @@
+use core::num;
 use std::fs::{self, File};
 use std::io::Write;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -55,14 +57,16 @@ pub struct HttpDownload {
     /**
      * This function is called every time there is an update to the download progress
      * the float passed is a value between 0 and 1 representing the progress on the download
+     *  - The idea is to use this functions return value to stop the download too, the main thread gets a chance to stop
+     * the download on every update this download sends.
      */
-    on_update: Option<Box<dyn FnMut(f32) -> () + Send>>,
+    on_update: Option<Box<dyn FnMut(f64) -> Box<dyn Future<Output=bool>>>>,
 }
 
 impl HttpDownload {
     /** Initializes a new HttpDownload.
-                                * file_path: Path to the file, doesn't matter if it exists already.
-                                * config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+       *  file_path: Path to the file, doesn't matter if it exists already.
+       *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(url: Url, file_path: PathBuf, config: Option<HttpDownloadConfig>) -> Result<Self, String> {
         // If no configuration is passed the default one is copied
@@ -85,6 +89,7 @@ impl HttpDownload {
         return Ok(download);
     }
 
+    pub async fn update_progress(&mut self) {}
     /**
      * Starts the Download from scratch
      */
@@ -108,7 +113,7 @@ impl HttpDownload {
         )))?;
 
         if let Some(chunk_size) = self.config.chunk_size {
-            // Chunked download
+            // Chunked-Buffer download
             let mut stream = resp.bytes_stream().chunks(chunk_size);
             while let Some(buffered_chunks) = stream.next().await {
                 for result in buffered_chunks {
@@ -120,6 +125,7 @@ impl HttpDownload {
                 }
             }
         } else {
+            // Simple Chunked download, write em as they come
             let mut stream = resp.bytes_stream();
             while let Some(item) = stream.next().await {
                 let chunk = item.map_err(|e| format!(
@@ -129,6 +135,7 @@ impl HttpDownload {
                 self.downloaded_bytes += file_handler
                     .write(&chunk)
                     .or(Err(format!("Error while writing to file at {:?}", self.file_path)))? as u64;
+                self.update_progress().await;
             }
         }
         // chunked_stream.next()
