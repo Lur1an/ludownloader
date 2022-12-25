@@ -102,6 +102,8 @@ impl HttpDownload {
             self.url.as_str()
         )))?;
         let mut stream = resp.bytes_stream();
+        // let chunked_stream = stream.chunks(10 * 1024 * 1024);
+        // chunked_stream.next()
         while let Some(item) = stream.next().await {
             let chunk = item.map_err(|e| format!(
                 "Error while downloading file from url: {:#?}. Error: {:#?}",
@@ -170,6 +172,10 @@ pub struct HttpDownloadConfig {
      * Timeout parameter for requests
      */
     timeout: Duration,
+    /**
+    * Number of threads that can concurrently handle this download, ignored
+    * if the server doesn't support http ranges
+    */
     num_workers: usize,
     /**
      * Request headers for the Download
