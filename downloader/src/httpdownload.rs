@@ -278,15 +278,16 @@ pub async fn quick_download(url: &str) -> Result<(), String> {
     }
 
     let mut download = HttpDownload::new(url, fpath, None).await?;
-    return download.start().await;
+    download.start().await
 }
 
 #[cfg(test)]
 mod test {
-    use std::error::Error;
-    use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
     use super::*;
+    use futures::FutureExt;
+    use pretty_assertions::assert_eq;
+    use std::error::Error;
+    use tempfile::TempDir;
 
     async fn setup_test_download() -> Result<(HttpDownload, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
@@ -297,6 +298,26 @@ mod test {
         let download = HttpDownload::new(url, file_path, None).await?;
         Ok((download, tmp_dir))
     }
+    #[tokio::test]
+    async fn update_function_is_called_test() -> Result<(), Box<dyn Error>> {
+        // given
+        let (mut download, _tmp_dir) = setup_test_download().await?;
+        // and
+        let p1 = Arc::new(Mutex::new(0.0));
+        let p2 = p1.clone();
+        let update_value = |p: f64| async move {
+            let mut val = p2.lock().unwrap();
+            *val = p;
+        }.boxed(); 
+        let boxed_closure = Box::new(update_value);
+        download.on_update = Some(boxed_closure);
+        // when
+        download.start().await?;
+        // then
+        assert!(*p2.lock().unwrap() > 0.0, "x should be way bigger than 0");
+        Ok(())
+    }
+
     #[tokio::test]
     async fn server_data_is_requested_on_create_test() -> Result<(), Box<dyn Error>> {
         // given
