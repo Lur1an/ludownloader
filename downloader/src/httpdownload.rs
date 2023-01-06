@@ -29,20 +29,12 @@ pub struct HttpDownload {
      * Target file for the download
      */
     file_path: PathBuf,
-    /**
-     * Amount of current retries
-     */
-    tries: u32,
-    /**
-     * Download configuration
-     */
+
     config: HttpDownloadConfig,
     /**
      * Currently used HttpClient
      */
     client: Client,
-    pause_download: Mutex<bool>,
-    complete: bool,
     /**
      * Size of the download in bytes
      */
@@ -57,19 +49,12 @@ pub struct HttpDownload {
     * This value get's updated on start()
      */
     supports_byte_ranges: bool,
-    /**
-     * This function is called every time there is an update to the download progress
-     * the float passed is a value between 0 and 1 representing the progress on the download
-     *  - The idea is to use this functions return value to stop the download too, the main thread gets a chance to stop
-     * the download on every update this download sends.
-     */
-    on_update: Option<Box<dyn Fn(f64) -> BoxFuture<'static, ()>>>,
 }
 
 impl HttpDownload {
     /** Initializes a new HttpDownload.
-        *  file_path: Path to the file, doesn't matter if it exists already.
-        *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+           *  file_path: Path to the file, doesn't matter if it exists already.
+           *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(
         url: Url,
@@ -85,22 +70,11 @@ impl HttpDownload {
             config,
             downloaded_bytes,
             supports_byte_ranges: false,
-            tries: 0,
             client: Client::new(),
-            pause_download: Mutex::new(false),
-            complete: false,
             content_length: 0u64,
-            on_update: None,
         };
         download.update_server_data().await?;
         Ok(download)
-    }
-
-    pub async fn update_progress(&self) {
-        if let Some(fn_box) = &self.on_update {
-            let progress = self.downloaded_bytes as f64 / self.content_length as f64;
-            fn_box(progress).await;
-        }
     }
 
     /**
@@ -130,7 +104,6 @@ impl HttpDownload {
             // Chunked-Buffer download
             let mut stream = resp.bytes_stream().chunks(chunk_size);
             while let Some(buffered_chunks) = stream.next().await {
-                if self.should_pause_download() { return Ok(()); }
                 for result in buffered_chunks {
                     match result {
                         Ok(chunk) => {
@@ -164,35 +137,10 @@ impl HttpDownload {
                     "Error while writing to file at {:?}",
                     self.file_path
                 )))? as u64;
-                self.update_progress().await;
             }
         }
-        // chunked_stream.next()
-
-        self.complete = true;
         Ok(())
     }
-    fn should_pause_download(&self) -> bool {
-        if let Ok(pause_download) = self.pause_download.lock() {
-            return *pause_download;
-        } else {
-            return true;
-        }
-    }
-    /**
-     * Pauses the download
-     */
-    pub fn pause(&self) -> Result<(), String> {
-        let mut pause_now = self.pause_download.lock().map_err(|e| format!("Couldn't acquire lock to pause download: {:?}", e))?;
-        *pause_now = true;
-        Ok(())
-    }
-
-    /**
-     * Tries to resume the download
-     */
-    pub fn resume(&mut self) {}
-
     /**
     Queries the server to update some Download data.
     * updates content_length
@@ -233,18 +181,9 @@ Holds the http configuration for the Download
 #[derive(Debug, Clone)]
 pub struct HttpDownloadConfig {
     /**
-     * Limits the amount of retries the Download can do before being terminated
-     */
-    max_retries: u32,
-    /**
      * Timeout parameter for requests
      */
     timeout: Duration,
-    /**
-     * Number of threads that can concurrently handle this download, ignored
-     * if the server doesn't support http ranges
-     */
-    num_workers: usize,
     /**
      * Request headers for the Download
      */
@@ -262,9 +201,7 @@ impl HttpDownloadConfig {
      */
     fn default() -> Self {
         let mut config = HttpDownloadConfig {
-            max_retries: 100,
             timeout: Duration::from_secs(60),
-            num_workers: 8,
             headers: HeaderMap::new(),
             chunk_size: None,
         };
@@ -297,7 +234,6 @@ pub async fn quick_download(url: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod test {
-    use std::borrow::BorrowMut;
     use super::*;
     use futures::FutureExt;
     use pretty_assertions::assert_eq;
@@ -313,34 +249,6 @@ mod test {
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
         let download = HttpDownload::new(url, file_path, None).await?;
         Ok((download, tmp_dir))
-    }
-
-    #[tokio::test]
-    async fn download_can_be_paused_and_resumed_test() -> Result<(), Box<dyn Error>> {
-        // given
-        let (mut download, _tmp_dir) = setup_test_download().await?;
-        // when
-        let download_future = download.start();
-        download.pause();
-        // then
-        assert!(true, "x should be way bigger than 0");
-
-        Ok(())
-    }
-    #[tokio::test]
-    async fn update_function_is_called_test() -> Result<(), Box<dyn Error>> {
-        // given
-        let (mut download, _tmp_dir) = setup_test_download().await?;
-        // and
-        let update_value = |p: f64| async {}.boxed();
-        let boxed_closure = Box::new(update_value);
-        download.on_update = Some(boxed_closure);
-        // when
-        download.start().await?;
-        // then
-        assert!(true, "x should be way bigger than 0");
-
-        Ok(())
     }
 
     #[tokio::test]
@@ -380,11 +288,6 @@ mod test {
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
         );
-        assert!(
-            download.complete,
-            "Download should know that it's complete and expose this through the API"
-        );
-
         Ok(())
     }
 
@@ -409,11 +312,6 @@ mod test {
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
         );
-        assert!(
-            download.complete,
-            "Download should know that it's complete and expose this through the API"
-        );
-
         Ok(())
     }
 
