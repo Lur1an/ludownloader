@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::fs;
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{header, Url};
 
@@ -10,8 +9,8 @@ use std::io::Write;
  * Tries to extract file size in bytes from given Path
  * If the Path is wrong or the metadata read operation fails the function returns 0
  */
-pub fn file_size(fpath: &Path) -> u64 {
-    match fs::metadata(fpath) {
+pub async fn file_size(fpath: &Path) -> u64 {
+    match tokio::fs::metadata(fpath).await {
         Ok(metadata) => metadata.len(),
         _ => 0,
     }
@@ -85,8 +84,8 @@ mod test {
         Ok(())
     }
 
-    #[test]
-    fn file_size_retrieval_test() -> Result<(), Box<dyn Error>> {
+    #[tokio::test]
+    async fn file_size_retrieval_test() -> Result<(), Box<dyn Error>> {
         // Setup
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
@@ -96,7 +95,7 @@ mod test {
         // Create file and check that it's empty (size == 0)
         let mut file_handler = File::create(&fpath).unwrap();
         assert_eq!(
-            file_size(fpath.as_path()),
+            file_size(fpath.as_path()).await,
             0,
             "Newly created file should have 0 Bytes!"
         );
@@ -106,7 +105,7 @@ mod test {
         file_handler.flush()?;
         // Assert that the file_size function retrieves the exact number of bytes written
         assert_eq!(
-            file_size(&fpath),
+            file_size(&fpath).await,
             bytes,
             "File should have as many bytes as written in the buffer!"
         );

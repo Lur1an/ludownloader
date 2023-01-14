@@ -62,8 +62,8 @@ impl HttpDownload {
         config: Option<HttpDownloadConfig>,
     ) -> Result<Self, String> {
         // If no configuration is passed the default one is copied
-        let config = config.unwrap_or_else(|| HttpDownloadConfig::default());
-        let downloaded_bytes = file_size(&file_path);
+        let config = config.unwrap_or_else(HttpDownloadConfig::default);
+        let downloaded_bytes = file_size(&file_path).await;
         let mut download = HttpDownload {
             url,
             file_path,
@@ -133,10 +133,10 @@ impl HttpDownload {
                         self.url, e
                     )
                 })?;
-                self.downloaded_bytes += file_handler.write(&chunk).or(Err(format!(
-                    "Error while writing to file at {:?}",
-                    self.file_path
-                )))? as u64;
+                self.downloaded_bytes += file_handler.write(&chunk).map_err(|e| format!(
+                    "Error while writing to file at {:?}, Error: {:#?}",
+                    self.file_path, e
+                ))? as u64;
             }
         }
         Ok(())
@@ -280,7 +280,7 @@ mod test {
         // then
         assert_eq!(
             download.content_length,
-            file_size(&download.file_path),
+            file_size(&download.file_path).await,
             "File size should be equal to content_length"
         );
         assert_eq!(
@@ -304,7 +304,7 @@ mod test {
         // then
         assert_eq!(
             download.content_length,
-            file_size(&download.file_path),
+            file_size(&download.file_path).await,
             "File size should be equal to content_length"
         );
         assert_eq!(
@@ -327,7 +327,7 @@ mod test {
         // when
         quick_download(url_str).await?;
         // then
-        assert!(file_size(&expected_download_path) != 0);
+        assert!(file_size(&expected_download_path).await != 0);
         fs::remove_file(expected_download_path)?;
         Ok(())
     }
