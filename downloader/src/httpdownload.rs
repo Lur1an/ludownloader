@@ -1,12 +1,12 @@
 use core::num;
-use std::fs::{self, File};
 use std::io::Write;
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::str::from_utf8_unchecked;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use tokio::fs::{self, File};
+use tokio::io::AsyncWriteExt;
 
 use directories::UserDirs;
 use futures::future::BoxFuture;
@@ -53,8 +53,8 @@ pub struct HttpDownload {
 
 impl HttpDownload {
     /** Initializes a new HttpDownload.
-           *  file_path: Path to the file, doesn't matter if it exists already.
-           *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+     *  file_path: Path to the file, doesn't matter if it exists already.
+     *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(
         url: Url,
@@ -89,7 +89,7 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send();
         // Open the file
-        let mut file_handler = File::create(&self.file_path).map_err(|_| {
+        let mut file_handler = File::create(&self.file_path).await.map_err(|_| {
             format!(
                 "Failed creating/opening File for HttpDownload. path: {:?}",
                 self.file_path
@@ -107,12 +107,13 @@ impl HttpDownload {
                 for result in buffered_chunks {
                     match result {
                         Ok(chunk) => {
-                            self.downloaded_bytes += file_handler.write(&chunk).map_err(|e| {
-                                format!(
-                                    "Error while writing to file at {:?}. Error: {:#?}",
-                                    self.file_path, e
-                                )
-                            })? as u64
+                            self.downloaded_bytes +=
+                                file_handler.write(&chunk).await.map_err(|e| {
+                                    format!(
+                                        "Error while writing to file at {:?}. Error: {:#?}",
+                                        self.file_path, e
+                                    )
+                                })? as u64
                         }
                         Err(e) => {
                             return Err(format!(
@@ -133,10 +134,12 @@ impl HttpDownload {
                         self.url, e
                     )
                 })?;
-                self.downloaded_bytes += file_handler.write(&chunk).map_err(|e| format!(
-                    "Error while writing to file at {:?}, Error: {:#?}",
-                    self.file_path, e
-                ))? as u64;
+                self.downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
+                    format!(
+                        "Error while writing to file at {:?}, Error: {:#?}",
+                        self.file_path, e
+                    )
+                })? as u64;
             }
         }
         Ok(())
@@ -237,6 +240,7 @@ mod test {
     use super::*;
     use futures::FutureExt;
     use pretty_assertions::assert_eq;
+    use tokio::fs::remove_file;
     use std::error::Error;
     use std::ptr::addr_of_mut;
     use tempfile::TempDir;
@@ -328,7 +332,7 @@ mod test {
         quick_download(url_str).await?;
         // then
         assert!(file_size(&expected_download_path).await != 0);
-        fs::remove_file(expected_download_path)?;
+        remove_file(expected_download_path).await?;
         Ok(())
     }
 }
