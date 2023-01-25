@@ -1,24 +1,13 @@
-use core::num;
 use std::io::Write;
-use std::ops::{Deref, DerefMut};
-use std::path::{Path, PathBuf};
-use std::rc::Rc;
-use std::str::from_utf8_unchecked;
+use std::path::{PathBuf};
 use std::time::Duration;
-use tokio::fs::{self, File};
+use tokio::fs::{File};
 use tokio::io::AsyncWriteExt;
-
-use directories::UserDirs;
-use futures::future::BoxFuture;
-use futures::Future;
 use futures_util::StreamExt;
-use log;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{header, Client, Url};
-
 use crate::constants::DEFAULT_USER_AGENT;
-use crate::util;
-use crate::util::{file_size, parse_filename};
+use crate::util::{supports_byte_ranges, file_size, parse_filename};
 
 pub struct HttpDownload {
     /**
@@ -62,8 +51,8 @@ impl HttpDownload {
             .await
     }
     /** Initializes a new HttpDownload.
-     *  file_path: Path to the file, doesn't matter if it exists already.
-     *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+           *  file_path: Path to the file, doesn't matter if it exists already.
+           *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(
         url: Url,
@@ -87,9 +76,7 @@ impl HttpDownload {
         Ok(download)
     }
 
-    /**
-     * Starts the Download from scratch
-     */
+    /** Starts the Download from scratch */
     pub async fn start(&mut self) -> Result<(), String> {
         // Send the frigging request
         let resp = self
@@ -103,6 +90,7 @@ impl HttpDownload {
                 self.file_path, e
             )
         })?;
+        let mut downloaded_bytes = self.downloaded_bytes;
         // Await the response, raise error with String msg otherwise
         if let Some(chunk_size) = self.config.chunk_size {
             // Chunked-Buffer download
@@ -112,13 +100,14 @@ impl HttpDownload {
                     let chunk = item.map_err(|e| {
                         format!("Error while chunking download response. Error: {:?}", e)
                     })?;
-                    self.downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
+                    downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
                         format!(
                             "Error while writing to file at {:?}. Error: {:#?}",
                             self.file_path, e
                         )
                     })? as u64;
                 }
+                self.set_downloaded_bytes(downloaded_bytes).await;
             }
         } else {
             // Simple Chunked download, write em as they come
@@ -130,12 +119,13 @@ impl HttpDownload {
                         self.url, e
                     )
                 })?;
-                self.downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
+                downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
                     format!(
                         "Error while writing to file at {:?}, Error: {:#?}",
                         self.file_path, e
                     )
                 })? as u64;
+                self.set_downloaded_bytes(downloaded_bytes).await;
             }
         }
         Ok(())
@@ -144,7 +134,6 @@ impl HttpDownload {
     Queries the server to update some Download data.
     * updates content_length
     * updates accepts_bytes
-    * This function doesn't fail or return errors, on worst case nothing happens
      */
     async fn update_server_data(&mut self) -> Result<(), String> {
         let response = self.get().await.map_err(|err| {
@@ -163,8 +152,17 @@ impl HttpDownload {
                 ));
             }
         }
-        self.supports_byte_ranges = util::supports_byte_ranges(response.headers());
+        self.supports_byte_ranges = supports_byte_ranges(response.headers());
         Ok(())
+    }
+
+    async fn get_downloaded_bytes(&self) -> u64 {
+       self.downloaded_bytes
+    }
+
+    async fn set_downloaded_bytes(&mut self, value: u64) -> () {
+        println!("Setting downloaded bytes to: {}", value);
+        self.downloaded_bytes = value;
     }
 }
 
@@ -186,10 +184,8 @@ pub struct HttpDownloadConfig {
 
 impl HttpDownloadConfig {
     /**
-    Creates a default set of settings.
-    * max_retries: 100
+    Creates a default set of settings:
     * headers: { user-agent: "ludownloader" }
-    * num_workers: 8
     * timeout: 30s
      */
     fn default() -> Self {
@@ -206,36 +202,13 @@ impl HttpDownloadConfig {
     }
 }
 
-pub async fn quick_download(url: &str) -> Result<(), String> {
-    let url = Url::parse(url).map_err(|e| format!("Failed parsing the url: {:?}", e))?;
-    let fname =
-        PathBuf::from(util::parse_filename(&url).ok_or("Couldn't get a filename from the url")?);
-
-    let fpath;
-    if let Some(user_dirs) = UserDirs::new() {
-        let download_dir = user_dirs
-            .download_dir()
-            .ok_or("Couldn't get download dir")?;
-        fpath = download_dir.join(fname);
-    } else {
-        return Err(String::from("Couldn't get UserDirs from OS"));
-    }
-
-    let client = Client::new();
-    let mut download = HttpDownload::new(url, fpath, client, None).await?;
-    download.start().await
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
-    use futures::FutureExt;
     use pretty_assertions::assert_eq;
     use std::error::Error;
-    use std::ptr::addr_of_mut;
     use std::sync::Arc;
     use tempfile::TempDir;
-    use tokio::fs::remove_file;
     use tokio::sync::Mutex;
 
     async fn setup_test_download() -> Result<(HttpDownload, TempDir), Box<dyn Error>> {
@@ -246,11 +219,6 @@ mod test {
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
         let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
         Ok((download, tmp_dir))
-    }
-
-    #[tokio::test]
-    async fn premium_ddownload_test() -> Result<(), Box<dyn Error>> {
-        Ok(())
     }
 
     #[tokio::test]
@@ -279,10 +247,10 @@ mod test {
                 "File size should be equal to content_length"
             );
             assert_eq!(
-            download.downloaded_bytes,
-            download.content_length,
-            "The downloaded bytes need to be equal to the content_length when the download is finished"
-        );
+                download.downloaded_bytes,
+                download.content_length,
+                "The downloaded bytes need to be equal to the content_length when the download is finished"
+            );
         }
         Ok(())
     }
@@ -349,23 +317,6 @@ mod test {
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
         );
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn quick_download_test() -> Result<(), Box<dyn Error>> {
-        // given
-        let url_str = "https://github.com/yourkin/fileupload-fastapi/raw/a85a697cab2f887780b3278059a0dd52847d80f3/tests/data/test-10mb.bin";
-        let url = Url::parse(url_str)?;
-        let user_dirs = UserDirs::new().unwrap();
-        let download_dir = user_dirs.download_dir().unwrap();
-        let filename = parse_filename(&url).unwrap();
-        let expected_download_path = download_dir.join(filename);
-        // when
-        quick_download(url_str).await?;
-        // then
-        assert!(file_size(&expected_download_path).await != 0);
-        remove_file(expected_download_path).await?;
         Ok(())
     }
 }
