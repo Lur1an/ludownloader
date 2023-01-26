@@ -1,25 +1,27 @@
 use std::io::Write;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::time::Duration;
-use tokio::fs::{File};
+use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;
 use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest::{header, Client, Url};
+use reqwest::{Client, header, Url};
+use tokio::sync::Mutex;
 use crate::constants::DEFAULT_USER_AGENT;
-use crate::util::{supports_byte_ranges, file_size, parse_filename};
+use crate::httpdownload_config::HttpDownloadConfig;
+use crate::util::{file_size, parse_filename, supports_byte_ranges};
 
 pub struct HttpDownload {
     /**
      * Download Link
      */
-    url: Url,
+    pub url: Url,
     /**
      * Target file for the download
      */
-    file_path: PathBuf,
+    pub file_path: PathBuf,
 
-    config: HttpDownloadConfig,
+    pub config: HttpDownloadConfig,
     /**
      * Currently used HttpClient
      */
@@ -27,12 +29,12 @@ pub struct HttpDownload {
     /**
      * Size of the download in bytes
      */
-    content_length: u64,
+    pub content_length: u64,
     /**
      Amount of bytes downloaded, same as size of the file found at file_path.
     * This value is calculated in case the download is started with resume() and is then updated for every downloaded chunk.
      */
-    downloaded_bytes: u64,
+    pub downloaded_bytes: Mutex<u64>,
     /**
     If the server for the Download supports bytes
     * This value get's updated on start()
@@ -51,13 +53,13 @@ impl HttpDownload {
             .await
     }
     /** Initializes a new HttpDownload.
-           *  file_path: Path to the file, doesn't matter if it exists already.
-           *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+              *  file_path: Path to the file, doesn't matter if it exists already.
+              *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(
         url: Url,
         file_path: PathBuf,
-        client: reqwest::Client,
+        client: Client,
         config: Option<HttpDownloadConfig>,
     ) -> Result<Self, String> {
         // If no configuration is passed the default one is copied
@@ -67,8 +69,8 @@ impl HttpDownload {
             url,
             file_path,
             config,
-            downloaded_bytes,
             client,
+            downloaded_bytes: Mutex::new(downloaded_bytes),
             supports_byte_ranges: false,
             content_length: 0u64,
         };
@@ -77,7 +79,7 @@ impl HttpDownload {
     }
 
     /** Starts the Download from scratch */
-    pub async fn start(&mut self) -> Result<(), String> {
+    pub async fn start(&self) -> Result<(), String> {
         // Send the frigging request
         let resp = self
             .get()
@@ -90,7 +92,7 @@ impl HttpDownload {
                 self.file_path, e
             )
         })?;
-        let mut downloaded_bytes = self.downloaded_bytes;
+        let mut downloaded_bytes = self.get_downloaded_bytes().await;
         // Await the response, raise error with String msg otherwise
         if let Some(chunk_size) = self.config.chunk_size {
             // Chunked-Buffer download
@@ -157,48 +159,12 @@ impl HttpDownload {
     }
 
     async fn get_downloaded_bytes(&self) -> u64 {
-       self.downloaded_bytes
+        *self.downloaded_bytes.lock().await
     }
 
-    async fn set_downloaded_bytes(&mut self, value: u64) -> () {
-        println!("Setting downloaded bytes to: {}", value);
-        self.downloaded_bytes = value;
-    }
-}
-
-/**
-Holds the http configuration for the Download
- */
-#[derive(Debug, Clone)]
-pub struct HttpDownloadConfig {
-    /**
-     * Timeout parameter for requests
-     */
-    timeout: Duration,
-    /**
-     * Request headers for the Download
-     */
-    headers: HeaderMap,
-    chunk_size: Option<usize>,
-}
-
-impl HttpDownloadConfig {
-    /**
-    Creates a default set of settings:
-    * headers: { user-agent: "ludownloader" }
-    * timeout: 30s
-     */
-    fn default() -> Self {
-        let mut config = HttpDownloadConfig {
-            timeout: Duration::from_secs(60),
-            headers: HeaderMap::new(),
-            chunk_size: None,
-        };
-        config.headers.insert(
-            header::USER_AGENT,
-            HeaderValue::from_str(DEFAULT_USER_AGENT).unwrap(),
-        );
-        config
+    async fn set_downloaded_bytes(&self, value: u64) -> () {
+        let mut guard = self.downloaded_bytes.lock().await;
+        *guard = value;
     }
 }
 
@@ -247,7 +213,7 @@ mod test {
                 "File size should be equal to content_length"
             );
             assert_eq!(
-                download.downloaded_bytes,
+                download.get_downloaded_bytes().await,
                 download.content_length,
                 "The downloaded bytes need to be equal to the content_length when the download is finished"
             );
@@ -272,7 +238,6 @@ mod test {
             download.content_length, 10485760000,
             "content-length should be exactly the same as always for the 10GB file"
         );
-        std::mem::drop(download);
         Ok(())
     }
 
@@ -289,7 +254,7 @@ mod test {
             "File size should be equal to content_length"
         );
         assert_eq!(
-            download.downloaded_bytes,
+            download.get_downloaded_bytes().await,
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
         );
@@ -313,7 +278,7 @@ mod test {
             "File size should be equal to content_length"
         );
         assert_eq!(
-            download.downloaded_bytes,
+            download.get_downloaded_bytes().await,
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
         );
