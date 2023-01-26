@@ -8,10 +8,10 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{Client, header, Url};
 use tokio::sync::Mutex;
 use crate::constants::DEFAULT_USER_AGENT;
-use crate::httpdownload_config::HttpDownloadConfig;
+use crate::download_config::DownloadConfig;
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 
-pub struct HttpDownload {
+pub struct Download {
     /**
      * Download Link
      */
@@ -21,13 +21,12 @@ pub struct HttpDownload {
      */
     pub file_path: PathBuf,
 
-    pub config: HttpDownloadConfig,
+    pub config: DownloadConfig,
     /**
      * Currently used HttpClient
      */
     client: Client,
-    /**
-     * Size of the download in bytes
+    /** Size of the download in bytes
      */
     pub content_length: u64,
     /**
@@ -42,7 +41,7 @@ pub struct HttpDownload {
     supports_byte_ranges: bool,
 }
 
-impl HttpDownload {
+impl Download {
     /** Sends a request to the download server using encapsulated configuration and URL */
     pub async fn get(&self) -> Result<reqwest::Response, reqwest::Error> {
         self.client
@@ -60,12 +59,12 @@ impl HttpDownload {
         url: Url,
         file_path: PathBuf,
         client: Client,
-        config: Option<HttpDownloadConfig>,
+        config: Option<DownloadConfig>,
     ) -> Result<Self, String> {
         // If no configuration is passed the default one is copied
-        let config = config.unwrap_or_else(HttpDownloadConfig::default);
+        let config = config.unwrap_or_else(DownloadConfig::default);
         let downloaded_bytes = file_size(&file_path).await;
-        let mut download = HttpDownload {
+        let mut download = Download {
             url,
             file_path,
             config,
@@ -177,13 +176,13 @@ mod test {
     use tempfile::TempDir;
     use tokio::sync::Mutex;
 
-    async fn setup_test_download() -> Result<(HttpDownload, TempDir), Box<dyn Error>> {
+    async fn setup_test_download() -> Result<(Download, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
         let url_str = "https://github.com/yourkin/fileupload-fastapi/raw/a85a697cab2f887780b3278059a0dd52847d80f3/tests/data/test-10mb.bin";
         let url = Url::parse(url_str)?;
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
-        let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
+        let download = Download::new(url, file_path, Client::new(), None).await?;
         Ok((download, tmp_dir))
     }
 
@@ -195,18 +194,16 @@ mod test {
         for _ in 0..60 {
             let (download, _tmp_dir) = setup_test_download().await.unwrap();
             _tmp_dir_owner.push(_tmp_dir);
-            let download_arc = Arc::new(Mutex::new(download));
+            let download_arc = Arc::new(download);
             download_arcs.push(download_arc.clone());
             let task = tokio::task::spawn(async move {
-                let mut guard = download_arc.lock().await;
-                guard.start().await.unwrap();
+                download_arc.start().await.unwrap()
             });
             futures.push(task);
         }
         futures::future::join_all(futures).await;
 
-        for download_arc in download_arcs {
-            let download = download_arc.lock().await;
+        for download in download_arcs {
             assert_eq!(
                 download.content_length,
                 file_size(&download.file_path).await,
@@ -228,7 +225,7 @@ mod test {
         let url = Url::parse(url_str)?;
         let file_path = PathBuf::from(parse_filename(&url).unwrap());
         // when creating a download, server data is present in the download struct
-        let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
+        let download = Download::new(url, file_path, Client::new(), None).await?;
         // then
         assert!(
             download.supports_byte_ranges,
@@ -264,7 +261,7 @@ mod test {
     #[tokio::test]
     async fn download_with_chunksize_test() -> Result<(), Box<dyn Error>> {
         // given
-        let mut config = HttpDownloadConfig::default();
+        let mut config = DownloadConfig::default();
         config.chunk_size = Some(536870912);
         // and
         let (mut download, _tmp_dir) = setup_test_download().await?;

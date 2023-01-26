@@ -99,19 +99,8 @@ dependencies = [
 [[package]]
 name = "download-manager"
 version = "0.1.0"
-
-[[package]]
-name = "downloader"
-version = "0.1.0"
 dependencies = [
- "directories",
- "futures",
- "futures-util",
- "log",
- "pretty_assertions",
- "reqwest",
- "tempfile",
- "tokio",
+ "httpdownload",
 ]
 
 [[package]]
@@ -329,6 +318,20 @@ name = "httpdate"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4a1e36c821dbe04574f602848a19f742f4fb3c98d40449f11bcad18d6b17421"
+
+[[package]]
+name = "httpdownload"
+version = "0.1.0"
+dependencies = [
+ "directories",
+ "futures",
+ "futures-util",
+ "log",
+ "pretty_assertions",
+ "reqwest",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "hyper"

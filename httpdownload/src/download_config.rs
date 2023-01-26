@@ -7,7 +7,7 @@ use crate::constants::DEFAULT_USER_AGENT;
 Holds the http configuration for the Download
  */
 #[derive(Debug, Clone)]
-pub struct HttpDownloadConfig {
+pub struct DownloadConfig {
     /**
      * Timeout parameter for requests
      */
@@ -19,14 +19,14 @@ pub struct HttpDownloadConfig {
     pub chunk_size: Option<usize>,
 }
 
-impl HttpDownloadConfig {
+impl DownloadConfig {
     /**
     Creates a default set of settings:
     * headers: { user-agent: "ludownloader" }
     * timeout: 30s
      */
     pub fn default() -> Self {
-        let mut config = HttpDownloadConfig {
+        let mut config = DownloadConfig {
             timeout: Duration::from_secs(60),
             headers: HeaderMap::new(),
             chunk_size: None,
