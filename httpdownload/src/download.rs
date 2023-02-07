@@ -1,17 +1,21 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
+
+use futures_util::StreamExt;
+use reqwest::{Client, header, Url};
+use reqwest::header::{HeaderMap, HeaderValue};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
-use futures_util::StreamExt;
-use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest::{Client, header, Url};
 use tokio::sync::Mutex;
+
 use crate::constants::DEFAULT_USER_AGENT;
 use crate::download_config::DownloadConfig;
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 
+
 pub struct Download {
+
     /**
      * Download Link
      */
@@ -36,7 +40,7 @@ pub struct Download {
     pub downloaded_bytes: Mutex<u64>,
     /**
     If the server for the Download supports bytes
-    * This value get's updated on start()
+    * This value gets updated on start()
      */
     supports_byte_ranges: bool,
 }
@@ -52,8 +56,8 @@ impl Download {
             .await
     }
     /** Initializes a new HttpDownload.
-              *  file_path: Path to the file, doesn't matter if it exists already.
-              *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+                    *  file_path: Path to the file, doesn't matter if it exists already.
+                    *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(
         url: Url,
@@ -83,7 +87,7 @@ impl Download {
         let resp = self
             .get()
             .await
-            .map_err(|_| format!("Failed to send GET to: '{}'", self.url.as_str()))?;
+            .map_err(|_| format!("Failed to GET: '{}'", self.url.as_str()))?;
         // Open the file
         let mut file_handler = File::create(&self.file_path).await.map_err(|e| {
             format!(
@@ -93,41 +97,20 @@ impl Download {
         })?;
         let mut downloaded_bytes = self.get_downloaded_bytes().await;
         // Await the response, raise error with String msg otherwise
-        if let Some(chunk_size) = self.config.chunk_size {
-            // Chunked-Buffer download
-            let mut stream = resp.bytes_stream().chunks(chunk_size);
-            while let Some(buffered_chunks) = stream.next().await {
-                for item in buffered_chunks {
-                    let chunk = item.map_err(|e| {
-                        format!("Error while chunking download response. Error: {:?}", e)
-                    })?;
-                    downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
-                        format!(
-                            "Error while writing to file at {:?}. Error: {:#?}",
-                            self.file_path, e
-                        )
-                    })? as u64;
-                }
-                self.set_downloaded_bytes(downloaded_bytes).await;
-            }
-        } else {
-            // Simple Chunked download, write em as they come
-            let mut stream = resp.bytes_stream();
-            while let Some(item) = stream.next().await {
+        let mut stream = resp.bytes_stream().chunks(self.config.chunk_size);
+        while let Some(buffered_chunks) = stream.next().await {
+            for item in buffered_chunks {
                 let chunk = item.map_err(|e| {
-                    format!(
-                        "Error while downloading file from url: {:#?}. Error: {:#?}",
-                        self.url, e
-                    )
+                    format!("Error while chunking download response. Error: {:?}", e)
                 })?;
                 downloaded_bytes += file_handler.write(&chunk).await.map_err(|e| {
                     format!(
-                        "Error while writing to file at {:?}, Error: {:#?}",
+                        "Error while writing to file at {:?}. Error: {:#?}",
                         self.file_path, e
                     )
                 })? as u64;
-                self.set_downloaded_bytes(downloaded_bytes).await;
             }
+            self.set_downloaded_bytes(downloaded_bytes).await;
         }
         Ok(())
     }
@@ -157,6 +140,10 @@ impl Download {
         Ok(())
     }
 
+    async fn get_bytes_on_disk(&self) -> u64 {
+        file_size(&self.file_path).await
+    }
+
     async fn get_downloaded_bytes(&self) -> u64 {
         *self.downloaded_bytes.lock().await
     }
@@ -169,12 +156,14 @@ impl Download {
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use pretty_assertions::assert_eq;
     use std::error::Error;
     use std::sync::Arc;
+
+    use pretty_assertions::assert_eq;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
+
+    use super::*;
 
     async fn setup_test_download() -> Result<(Download, TempDir), Box<dyn Error>> {
         let tmp_dir = TempDir::new()?;
@@ -239,9 +228,9 @@ mod test {
     }
 
     #[tokio::test]
-    async fn default_download_no_chunks_test() -> Result<(), Box<dyn Error>> {
+    async fn default_download_test() -> Result<(), Box<dyn Error>> {
         // given
-        let (mut download, _tmp_dir) = setup_test_download().await?;
+        let (download, _tmp_dir) = setup_test_download().await?;
         // when
         download.start().await?;
         // then
@@ -259,10 +248,10 @@ mod test {
     }
 
     #[tokio::test]
-    async fn download_with_chunksize_test() -> Result<(), Box<dyn Error>> {
+    async fn download_with_custom_chunksize_test() -> Result<(), Box<dyn Error>> {
         // given
         let mut config = DownloadConfig::default();
-        config.chunk_size = Some(536870912);
+        config.chunk_size = 1024 * 1029;
         // and
         let (mut download, _tmp_dir) = setup_test_download().await?;
         download.config = config;
