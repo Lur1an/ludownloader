@@ -1,7 +1,7 @@
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::header;
+use reqwest::header::{HeaderMap, HeaderValue};
 
 use crate::constants::{DEFAULT_CHUNK_SIZE, DEFAULT_USER_AGENT};
 
@@ -21,13 +21,13 @@ pub struct DownloadConfig {
     pub chunk_size: usize,
 }
 
-impl DownloadConfig {
+impl Default for DownloadConfig {
     /**
     Creates a default set of settings:
     * headers: { user-agent: "ludownloader" }
     * timeout: 30s
      */
-    pub fn default() -> Self {
+    fn default() -> Self {
         let mut config = DownloadConfig {
             timeout: Duration::from_secs(60),
             headers: HeaderMap::new(),

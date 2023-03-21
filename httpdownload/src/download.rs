@@ -3,19 +3,18 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use futures_util::StreamExt;
-use reqwest::{Client, header, Url};
-use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::{
+    header::{self, HeaderMap, HeaderValue},
+    Client, Url,
+};
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::constants::DEFAULT_USER_AGENT;
-use crate::download_config::DownloadConfig;
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
-
+use crate::{constants::DEFAULT_USER_AGENT, download_config::DownloadConfig};
 
 pub struct Download {
-
     /**
      * Download Link
      */
@@ -40,7 +39,7 @@ pub struct Download {
     pub downloaded_bytes: Mutex<u64>,
     /**
     If the server for the Download supports bytes
-    * This value gets updated on start()
+    * This value gets updated by the struct
      */
     supports_byte_ranges: bool,
 }
@@ -56,8 +55,8 @@ impl Download {
             .await
     }
     /** Initializes a new HttpDownload.
-                    *  file_path: Path to the file, doesn't matter if it exists already.
-                    *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
+     *  file_path: Path to the file, doesn't matter if it exists already.
+     *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
      */
     pub async fn new(
         url: Url,
@@ -185,9 +184,7 @@ mod test {
             _tmp_dir_owner.push(_tmp_dir);
             let download_arc = Arc::new(download);
             download_arcs.push(download_arc.clone());
-            let task = tokio::task::spawn(async move {
-                download_arc.start().await.unwrap()
-            });
+            let task = tokio::task::spawn(async move { download_arc.start().await.unwrap() });
             futures.push(task);
         }
         futures::future::join_all(futures).await;
