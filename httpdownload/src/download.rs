@@ -46,7 +46,7 @@ pub struct Download {
 
 impl Download {
     /** Sends a request to the download server using encapsulated configuration and URL */
-    pub async fn get(&self) -> Result<reqwest::Response, reqwest::Error> {
+    async fn get(&self) -> Result<reqwest::Response, reqwest::Error> {
         self.client
             .get(self.url.as_ref())
             .timeout(self.config.timeout)
