@@ -1,6 +1,7 @@
 extern crate core;
 
+pub mod api;
 mod constants;
-mod util;
-pub mod download;
 pub mod download_config;
+pub mod httpdownload;
+mod util;
