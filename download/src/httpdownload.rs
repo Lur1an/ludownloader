@@ -1,4 +1,4 @@
-use std::arch::x86_64::_mm_div_ss;
+use async_trait::async_trait;
 use std::future::Future;
 use std::io::Write;
 use std::path::PathBuf;
@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::StreamExt;
+use reqwest::header::RANGE;
 use reqwest::{
     header::{self, HeaderMap, HeaderValue},
     Client, Response, Url,
@@ -16,7 +17,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
 
-use crate::api::{Error, Result};
+use crate::api::{Download, Error, Result};
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 use crate::{constants::DEFAULT_USER_AGENT, download_config::DownloadConfig};
 
@@ -45,6 +46,59 @@ pub struct HttpDownload {
     supports_byte_ranges: bool,
 }
 
+#[async_trait]
+impl Download for HttpDownload {
+    /** Starts the Download from scratch */
+    async fn start(&self) -> Result<u64> {
+        let resp = self
+            .client
+            .get(self.url.as_ref())
+            .timeout(self.config.timeout)
+            .headers(self.config.headers.clone())
+            .send()
+            .await?;
+        let mut file_handler = File::create(&self.file_path).await?;
+        Ok(self.download(resp, file_handler).await?)
+    }
+    async fn stop(&self) -> Result<()> {
+        todo!()
+    }
+
+    async fn resume(&self) -> Result<u64> {
+        let downloaded_bytes = self.get_bytes_on_disk().await;
+        if downloaded_bytes == self.content_length {
+            log::warn!(
+                "Tried downloading a file that was already downloaded: {}",
+                self.url
+            );
+            return Ok(downloaded_bytes);
+        }
+        if !self.supports_byte_ranges {
+            log::warn!(
+                "Tried resuming a download that doesn't support byte ranges: {}",
+                self.url
+            );
+            log::info!("Starting from scratch: {}", self.url);
+            return self.start().await;
+        }
+        let file_handler = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(&self.file_path)
+            .await?;
+
+        let resp = self
+            .client
+            .get(self.url.as_ref())
+            .timeout(self.config.timeout)
+            .headers(self.config.headers.clone())
+            .header(RANGE, format!("bytes={}-", downloaded_bytes))
+            .send()
+            .await?;
+        Ok(downloaded_bytes + self.download(resp, file_handler).await?)
+    }
+}
+
 impl HttpDownload {
     /** Initializes a new HttpDownload.
      *  file_path: Path to the file, doesn't matter if it exists already.
@@ -57,7 +111,7 @@ impl HttpDownload {
         config: Option<DownloadConfig>,
     ) -> Result<Self> {
         // If no configuration is passed the default one is copied
-        let config = config.unwrap_or_else(DownloadConfig::default);
+        let config = config.unwrap_or_default();
         let mut download = HttpDownload {
             url,
             file_path,
@@ -68,19 +122,6 @@ impl HttpDownload {
         };
         download.update_server_data().await?;
         Ok(download)
-    }
-
-    /** Starts the Download from scratch */
-    pub async fn start(&self) -> Result<u64> {
-        let resp = self
-            .client
-            .get(self.url.as_ref())
-            .timeout(self.config.timeout)
-            .headers(self.config.headers.clone())
-            .send()
-            .await?;
-        let mut file_handler = File::create(&self.file_path).await?;
-        Ok(self.download(resp, file_handler).await?)
     }
 
     async fn download(&self, resp: Response, mut file_handler: File) -> Result<u64> {
@@ -94,35 +135,6 @@ impl HttpDownload {
             }
         }
         Ok(downloaded_bytes)
-    }
-
-    pub async fn resume(&self) -> Result<u64> {
-        let downloaded_bytes = self.get_bytes_on_disk().await;
-        if downloaded_bytes == self.content_length {
-            log::warn!(
-                "Tried downloading a file that was already downloaded: {}",
-                self.url
-            );
-            return Ok(downloaded_bytes);
-        }
-        let file_handler = OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(&self.file_path)
-            .await?;
-
-        let resp = self
-            .client
-            .get(self.url.as_ref())
-            .timeout(self.config.timeout)
-            .headers(self.config.headers.clone())
-            .send()
-            .await?;
-        Ok(downloaded_bytes + self.download(resp, file_handler).await?)
-    }
-
-    pub async fn pause(&self) -> Result<()> {
-        Ok(())
     }
 
     /**

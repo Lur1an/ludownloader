@@ -1,10 +1,17 @@
+use async_trait::async_trait;
 use reqwest::Url;
 use thiserror::Error;
 
-pub trait Download {}
+#[async_trait]
+pub trait Download {
+    async fn start(&self) -> Result<u64>;
+    async fn stop(&self) -> Result<()>;
+    async fn resume(&self) -> Result<u64>;
+}
 
-pub trait Publisher<T> {
-    fn publish(value: T);
+#[async_trait]
+pub trait Subscriber<T> {
+    async fn subscribe(&self, value: T);
 }
 
 #[derive(Debug, Error)]
