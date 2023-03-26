@@ -4,5 +4,3 @@ members = [
     "account-manager",
     "download-manager"
 ]
-[toolchain]
-channel = "nightly"

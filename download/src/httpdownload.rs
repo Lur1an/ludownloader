@@ -15,7 +15,8 @@ use thiserror;
 use thiserror::Error;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::Mutex;
+use tokio::sync::oneshot::{channel, Receiver, Sender};
+use tokio::sync::{oneshot, Mutex};
 
 use crate::api::{Download, Error, Result};
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
@@ -44,6 +45,8 @@ pub struct HttpDownload {
     * This value gets updated by the struct
      */
     supports_byte_ranges: bool,
+    download_tx: Sender<()>,
+    download_rx: Receiver<()>,
 }
 
 #[async_trait]
@@ -57,11 +60,12 @@ impl Download for HttpDownload {
             .headers(self.config.headers.clone())
             .send()
             .await?;
-        let mut file_handler = File::create(&self.file_path).await?;
+        let file_handler = File::create(&self.file_path).await?;
         Ok(self.download(resp, file_handler).await?)
     }
-    async fn stop(&self) -> Result<()> {
-        todo!()
+    fn stop(&self) -> Result<()> {
+        self.download_tx.send(()).unwrap();
+        Ok(())
     }
 
     async fn resume(&self) -> Result<u64> {
@@ -112,11 +116,14 @@ impl HttpDownload {
     ) -> Result<Self> {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_default();
+        let (download_tx, download_rx): (Sender<()>, Receiver<()>) = channel();
         let mut download = HttpDownload {
             url,
             file_path,
             config,
             client,
+            download_rx,
+            download_tx,
             supports_byte_ranges: false,
             content_length: 0u64,
         };
@@ -199,7 +206,7 @@ mod test {
             let download_arc = Arc::new(Mutex::new(download));
             download_arcs.push(download_arc.clone());
             let task = tokio::task::spawn(async move {
-                let mut download_guard = download_arc.lock().await;
+                let download_guard = download_arc.lock().await;
                 download_guard.start().await.unwrap()
             });
             futures.push(task);
@@ -244,7 +251,7 @@ mod test {
     #[tokio::test]
     async fn default_download_test() -> Test<()> {
         // given
-        let (mut download, _tmp_dir) = setup_test_download().await?;
+        let (download, _tmp_dir) = setup_test_download().await?;
         // when
         let downloaded_bytes = download.start().await?;
         // then
