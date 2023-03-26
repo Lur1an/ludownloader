@@ -56,7 +56,6 @@ impl Download for HttpDownload {
         let resp = self
             .client
             .get(self.url.as_ref())
-            .timeout(self.config.timeout)
             .headers(self.config.headers.clone())
             .send()
             .await?;
@@ -100,7 +99,6 @@ impl Download for HttpDownload {
         let resp = self
             .client
             .get(self.url.as_ref())
-            .timeout(self.config.timeout)
             .headers(self.config.headers.clone())
             .header(RANGE, format!("bytes={}-", downloaded_bytes))
             .send()
@@ -208,6 +206,7 @@ mod test {
     use std::sync::Arc;
 
     use pretty_assertions::assert_eq;
+    use reqwest::ClientBuilder;
     use tempfile::TempDir;
     use tokio::sync::Mutex;
 
@@ -215,13 +214,13 @@ mod test {
 
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
 
-    async fn setup_test_download() -> Test<(HttpDownload, TempDir)> {
+    async fn setup_test_download(url_str: &str) -> Test<(HttpDownload, TempDir)> {
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
-        let url_str = "https://github.com/yourkin/fileupload-fastapi/raw/a85a697cab2f887780b3278059a0dd52847d80f3/tests/data/test-10mb.bin";
         let url = Url::parse(url_str)?;
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
-        let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
+        let client = Client::new();
+        let download = HttpDownload::new(url, file_path, client, None).await?;
         Ok((download, tmp_dir))
     }
 
@@ -233,7 +232,10 @@ mod test {
         let mut _tmp_dir_owner = Vec::new();
         let mut _stopper_owner = Vec::new();
         for _ in 0..60 {
-            let (download, _tmp_dir) = setup_test_download().await.unwrap();
+            let (download, _tmp_dir) =
+                setup_test_download("http://ipv4.download.thinkbroadband.com/50MB.zip")
+                    .await
+                    .unwrap();
             _tmp_dir_owner.push(_tmp_dir);
             let (handle, _stopper) = download.start().await?;
             _stopper_owner.push(_stopper);
@@ -280,7 +282,8 @@ mod test {
     #[tokio::test]
     async fn default_download_test() -> Test<()> {
         // given
-        let (download, _tmp_dir) = setup_test_download().await?;
+        let (download, _tmp_dir) =
+            setup_test_download("http://ipv4.download.thinkbroadband.com/50MB.zip").await?;
         // when
         let (download_handle, _stopper) = download.start().await?;
         let join_result = download_handle.await;
@@ -305,7 +308,8 @@ mod test {
         let mut config = DownloadConfig::default();
         config.chunk_size = 1024 * 1029;
         // and
-        let (mut download, _tmp_dir) = setup_test_download().await?;
+        let (mut download, _tmp_dir) =
+            setup_test_download("http://ipv4.download.thinkbroadband.com/50MB.zip").await?;
         download.config = config;
         // when
         let (download_handle, _stopper) = download.start().await?;
@@ -320,6 +324,19 @@ mod test {
             downloaded_bytes,
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
+        );
+        Ok(())
+    }
+    #[tokio::test]
+    async fn download_can_be_stopped_test() -> Test<()> {
+        let (download, _tmp_dir) = setup_test_download("https://speed.hetzner.de/10GB.bin").await?;
+        let (download_handle, stopper) = download.start().await?;
+        stopper.send(()).expect("Message needs to be sent");
+        let join_result = download_handle.await;
+        let downloaded_bytes = join_result??;
+        assert!(
+           downloaded_bytes < download.content_length,
+            "The downloaded bytes need to be less than the content_length when the download is stopped prematurely"
         );
         Ok(())
     }
