@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 
 use crate::api::{Download, Error, Result, Subscriber};
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
-use crate::{constants::DEFAULT_USER_AGENT, download_config::DownloadConfig};
+use crate::{constants::DEFAULT_USER_AGENT, download_config::HttpDownloadConfig};
 
 type DownloadSubscriber = Arc<dyn Subscriber<u64> + Send>;
 
@@ -36,7 +36,7 @@ pub struct HttpDownload {
      */
     pub file_path: PathBuf,
 
-    pub config: DownloadConfig,
+    pub config: HttpDownloadConfig,
     /**
      * Currently used HttpClient
      */
@@ -127,7 +127,7 @@ impl HttpDownload {
         url: Url,
         file_path: PathBuf,
         client: Client,
-        config: Option<DownloadConfig>,
+        config: Option<HttpDownloadConfig>,
     ) -> Result<Self> {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_default();
@@ -303,7 +303,7 @@ mod test {
     #[tokio::test]
     async fn download_with_custom_chunksize_test() -> Test<()> {
         // given
-        let mut config = DownloadConfig::default();
+        let mut config = HttpDownloadConfig::default();
         config.chunk_size = 1024 * 1029;
         // and
         let (mut download, _tmp_dir) =
