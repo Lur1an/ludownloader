@@ -10,9 +10,13 @@ pub trait Download {
     async fn resume(&self) -> Result<(JoinHandle<Result<u64>>, Sender<()>)>;
 }
 
+pub enum StatusUpdate {
+    Progress(u64),
+}
+
 #[async_trait]
 pub trait Subscriber<T> {
-    async fn subscribe(&self, value: T);
+    async fn update(&self, value: T);
 }
 
 #[derive(Debug, Error)]

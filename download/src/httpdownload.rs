@@ -20,9 +20,11 @@ use tokio::sync::oneshot::{channel, Receiver, Sender};
 use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::api::{Download, Error, Result};
+use crate::api::{Download, Error, Result, Subscriber};
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 use crate::{constants::DEFAULT_USER_AGENT, download_config::DownloadConfig};
+
+type DownloadSubscriber = Arc<dyn Subscriber<u64> + Send>;
 
 pub struct HttpDownload {
     /**
@@ -149,13 +151,11 @@ impl HttpDownload {
         mut stopper: Receiver<()>,
     ) -> Result<u64> {
         let mut downloaded_bytes = 0u64;
-        // Await the response, raise error with String msg otherwise
-        let mut stream = resp.bytes_stream().chunks(chunk_size);
-        while let Some(buffered_chunks) = stream.next().await {
-            for item in buffered_chunks {
-                let chunk = item?;
-                downloaded_bytes += file_handler.write(&chunk).await? as u64;
-            }
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let item = chunk?;
+            let bytes_written = file_handler.write(&item).await? as u64;
+            downloaded_bytes += bytes_written;
             match stopper.try_recv() {
                 Ok(_) => {
                     log::info!("Download stop signal received for: {}", url);
@@ -232,10 +232,11 @@ mod test {
         let mut _tmp_dir_owner = Vec::new();
         let mut _stopper_owner = Vec::new();
         for _ in 0..60 {
-            let (download, _tmp_dir) =
-                setup_test_download("http://ipv4.download.thinkbroadband.com/50MB.zip")
-                    .await
-                    .unwrap();
+            let (download, _tmp_dir) = setup_test_download(
+                "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb",
+            )
+            .await
+            .unwrap();
             _tmp_dir_owner.push(_tmp_dir);
             let (handle, _stopper) = download.start().await?;
             _stopper_owner.push(_stopper);
@@ -262,7 +263,7 @@ mod test {
     #[tokio::test]
     async fn server_data_is_requested_on_create_test() -> Test<()> {
         // given
-        let url_str = "https://speed.hetzner.de/10GB.bin";
+        let url_str = "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb";
         let url = Url::parse(url_str)?;
         let file_path = PathBuf::from(parse_filename(&url).unwrap());
         // when creating a download, server data is present in the download struct
@@ -272,10 +273,6 @@ mod test {
             download.supports_byte_ranges,
             "Server should support bytes!"
         );
-        assert_eq!(
-            download.content_length, 10485760000,
-            "content-length should be exactly the same as always for the 10GB file"
-        );
         Ok(())
     }
 
@@ -283,7 +280,8 @@ mod test {
     async fn default_download_test() -> Test<()> {
         // given
         let (download, _tmp_dir) =
-            setup_test_download("http://ipv4.download.thinkbroadband.com/50MB.zip").await?;
+            setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
+                .await?;
         // when
         let (download_handle, _stopper) = download.start().await?;
         let join_result = download_handle.await;
@@ -309,7 +307,8 @@ mod test {
         config.chunk_size = 1024 * 1029;
         // and
         let (mut download, _tmp_dir) =
-            setup_test_download("http://ipv4.download.thinkbroadband.com/50MB.zip").await?;
+            setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
+                .await?;
         download.config = config;
         // when
         let (download_handle, _stopper) = download.start().await?;
@@ -329,7 +328,9 @@ mod test {
     }
     #[tokio::test]
     async fn download_can_be_stopped_test() -> Test<()> {
-        let (download, _tmp_dir) = setup_test_download("https://speed.hetzner.de/10GB.bin").await?;
+        let (download, _tmp_dir) =
+            setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
+                .await?;
         let (download_handle, stopper) = download.start().await?;
         stopper.send(()).expect("Message needs to be sent");
         let join_result = download_handle.await;
