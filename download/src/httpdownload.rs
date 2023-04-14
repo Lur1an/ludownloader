@@ -24,8 +24,6 @@ use crate::api::{Download, Error, Result, Subscriber};
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 use crate::{constants::DEFAULT_USER_AGENT, download_config::HttpDownloadConfig};
 
-type DownloadSubscriber = Arc<dyn Subscriber<u64> + Send>;
-
 pub struct HttpDownload {
     /**
      * Download Link
