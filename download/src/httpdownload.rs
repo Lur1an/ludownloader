@@ -11,8 +11,6 @@ use reqwest::{
     header::{self, HeaderMap, HeaderValue},
     Client, Response, Url,
 };
-use thiserror;
-use thiserror::Error;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -20,9 +18,8 @@ use tokio::sync::oneshot::{channel, Receiver, Sender};
 use tokio::sync::{oneshot, Mutex};
 use tokio::task::JoinHandle;
 
-use crate::api::{Download, Error, Result, Subscriber};
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
-use crate::{constants::DEFAULT_USER_AGENT, download_config::HttpDownloadConfig};
+use crate::{download_config::HttpDownloadConfig, Error, Result, DEFAULT_USER_AGENT};
 
 pub struct HttpDownload {
     /**
@@ -49,30 +46,20 @@ pub struct HttpDownload {
     supports_byte_ranges: bool,
 }
 
-#[async_trait]
-impl Download for HttpDownload {
+impl HttpDownload {
     /** Starts the Download from scratch */
-    async fn start(&self) -> Result<(JoinHandle<Result<u64>>, Sender<()>)> {
+    async fn start(&self, rx: Receiver<()>) -> Result<u64> {
         let resp = self
             .client
             .get(self.url.as_ref())
             .headers(self.config.headers.clone())
             .send()
             .await?;
-        let (tx, rx) = channel::<()>();
         let file_handler = File::create(&self.file_path).await?;
-        let f = HttpDownload::progress(
-            self.url.clone(),
-            self.config.chunk_size,
-            resp,
-            file_handler,
-            rx,
-        );
-        let handle: JoinHandle<Result<u64>> = tokio::spawn(f);
-        Ok((handle, tx))
+        self.progress(resp, file_handler, rx).await
     }
 
-    async fn resume(&self) -> Result<(JoinHandle<Result<u64>>, Sender<()>)> {
+    async fn resume(&self, rx: Receiver<()>) -> Result<u64> {
         let downloaded_bytes = self.get_bytes_on_disk().await;
         if downloaded_bytes == self.content_length {
             log::warn!(
@@ -81,14 +68,13 @@ impl Download for HttpDownload {
             );
             return Err(Error::DownloadComplete(downloaded_bytes));
         }
-        let (tx, rx) = channel::<()>();
         if !self.supports_byte_ranges {
             log::warn!(
                 "Tried resuming a download that doesn't support byte ranges: {}",
                 self.url
             );
             log::info!("Starting from scratch: {}", self.url);
-            return self.start().await;
+            return self.start(rx).await;
         }
         let file_handler = OpenOptions::new()
             .write(true)
@@ -103,20 +89,9 @@ impl Download for HttpDownload {
             .header(RANGE, format!("bytes={}-", downloaded_bytes))
             .send()
             .await?;
-        let chunk_size = self.config.chunk_size;
-        let url = self.url.clone();
-        let f = async move {
-            Ok(
-                HttpDownload::progress(url, chunk_size, resp, file_handler, rx).await?
-                    + downloaded_bytes,
-            )
-        };
-        let handle: JoinHandle<Result<u64>> = tokio::spawn(f);
-        Ok((handle, tx))
+        self.progress(resp, file_handler, rx).await
     }
-}
 
-impl HttpDownload {
     /** Initializes a new HttpDownload.
      *  file_path: Path to the file, doesn't matter if it exists already.
      *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
@@ -142,8 +117,7 @@ impl HttpDownload {
     }
 
     async fn progress(
-        url: Url,
-        chunk_size: usize,
+        &self,
         resp: Response,
         mut file_handler: File,
         mut stopper: Receiver<()>,
@@ -156,14 +130,14 @@ impl HttpDownload {
             downloaded_bytes += bytes_written;
             match stopper.try_recv() {
                 Ok(_) => {
-                    log::info!("Download stop signal received for: {}", url);
+                    log::info!("Download stop signal received for: {}", self.url);
                     return Ok(downloaded_bytes);
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Closed) => {
-                    log::error!("Download stop signal channel closed for: {}", url);
-                    log::info!("Stopping download because of error: {}", url);
-                    return Err(Error::ChannelDrop(downloaded_bytes, url.clone()));
+                    log::error!("Download stop signal channel closed for: {}", self.url);
+                    log::info!("Stopping download because of error: {}", self.url);
+                    return Err(Error::ChannelDrop(downloaded_bytes, self.url.clone()));
                 }
             }
         }
@@ -227,18 +201,19 @@ mod test {
         let mut handles = Vec::new();
         let mut downloads = Vec::new();
         // Needed because if the tmp dir is dropped it is actually deleted in the Drop impl
-        let mut _tmp_dir_owner = Vec::new();
-        let mut _stopper_owner = Vec::new();
+        let mut anti_drop = Vec::new();
         for _ in 0..60 {
             let (download, _tmp_dir) = setup_test_download(
                 "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb",
             )
             .await
             .unwrap();
-            _tmp_dir_owner.push(_tmp_dir);
-            let (handle, _stopper) = download.start().await?;
-            _stopper_owner.push(_stopper);
-            downloads.push(download);
+            let download = Arc::new(download);
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            downloads.push(download.clone());
+            let fut = async move { download.start(rx).await };
+            let handle = tokio::spawn(fut);
+            anti_drop.push((_tmp_dir, tx));
             handles.push(handle);
         }
         let results = futures::future::join_all(handles).await;
@@ -281,9 +256,8 @@ mod test {
             setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
                 .await?;
         // when
-        let (download_handle, _stopper) = download.start().await?;
-        let join_result = download_handle.await;
-        let downloaded_bytes = join_result??;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let downloaded_bytes = download.start(rx).await?;
         // then
         assert_eq!(
             download.content_length,
@@ -309,8 +283,8 @@ mod test {
                 .await?;
         download.config = config;
         // when
-        let (download_handle, _stopper) = download.start().await?;
-        let downloaded_bytes = download_handle.await??;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let downloaded_bytes = download.start(rx).await?;
         // then
         assert_eq!(
             download.content_length,
@@ -324,17 +298,20 @@ mod test {
         );
         Ok(())
     }
+
     #[tokio::test]
     async fn download_can_be_stopped_test() -> Test<()> {
         let (download, _tmp_dir) =
             setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
                 .await?;
-        let (download_handle, stopper) = download.start().await?;
-        stopper.send(()).expect("Message needs to be sent");
-        let join_result = download_handle.await;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let content_length = download.content_length;
+        let handle = tokio::spawn(async move { download.start(rx).await });
+        tx.send(()).expect("Message needs to be sent");
+        let join_result = handle.await;
         let downloaded_bytes = join_result??;
         assert!(
-           downloaded_bytes < download.content_length,
+            downloaded_bytes < content_length,
             "The downloaded bytes need to be less than the content_length when the download is stopped prematurely"
         );
         Ok(())

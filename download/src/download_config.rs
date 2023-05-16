@@ -3,7 +3,7 @@ use std::time::Duration;
 use reqwest::header;
 use reqwest::header::{HeaderMap, HeaderValue};
 
-use crate::constants::{DEFAULT_CHUNK_SIZE, DEFAULT_USER_AGENT};
+use crate::{DEFAULT_CHUNK_SIZE, DEFAULT_USER_AGENT};
 
 /**
 Holds the http configuration for the Download
