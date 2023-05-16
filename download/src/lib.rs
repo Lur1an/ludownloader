@@ -1,5 +1,8 @@
 extern crate core;
 
+use std::sync::Arc;
+
+use httpdownload::HttpDownload;
 use reqwest::Url;
 use thiserror::Error;
 pub mod download_config;
@@ -20,6 +23,8 @@ pub enum Error {
     ChannelDrop(u64, Url),
     #[error("Download was already finished, downloaded bytes: '{0}'")]
     DownloadComplete(u64),
+    #[error("Download req did not yield 200, instead: '{0}'")]
+    DownloadNotOk(reqwest::StatusCode),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

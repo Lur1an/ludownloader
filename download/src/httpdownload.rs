@@ -1,26 +1,16 @@
-use async_trait::async_trait;
-use std::future::Future;
-use std::io::Write;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
 use futures_util::StreamExt;
 use reqwest::header::RANGE;
-use reqwest::{
-    header::{self, HeaderMap, HeaderValue},
-    Client, Response, Url,
-};
+use reqwest::{Client, Response, Url};
+use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::oneshot::{channel, Receiver, Sender};
-use tokio::sync::{oneshot, Mutex};
-use tokio::task::JoinHandle;
 
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 use crate::{download_config::HttpDownloadConfig, Error, Result, DEFAULT_USER_AGENT};
 
+#[derive(Debug, Clone)]
 pub struct HttpDownload {
     /**
      * Download Link
@@ -32,10 +22,6 @@ pub struct HttpDownload {
     pub file_path: PathBuf,
 
     pub config: HttpDownloadConfig,
-    /**
-     * Currently used HttpClient
-     */
-    client: Client,
     /** Size of the download in bytes
      */
     pub content_length: u64,
@@ -43,7 +29,11 @@ pub struct HttpDownload {
     If the server for the Download supports bytes
     * This value gets updated by the struct
      */
-    supports_byte_ranges: bool,
+    pub supports_byte_ranges: bool,
+    /**
+     * Currently used HttpClient
+     */
+    client: Client,
 }
 
 impl HttpDownload {
@@ -145,7 +135,7 @@ impl HttpDownload {
     }
 
     /**
-    Queries the server to update some Download data.
+    Queries the server to update Download metadata.
     * updates content_length
     * updates accepts_bytes
      */
@@ -157,6 +147,12 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send()
             .await?;
+
+        let status = resp.status();
+        match status {
+            reqwest::StatusCode::OK => {}
+            _ => return Err(Error::DownloadNotOk(status)),
+        };
 
         match resp.content_length() {
             Some(val) => self.content_length = val,
@@ -178,13 +174,13 @@ mod test {
     use std::sync::Arc;
 
     use pretty_assertions::assert_eq;
-    use reqwest::ClientBuilder;
     use tempfile::TempDir;
-    use tokio::sync::Mutex;
 
     use super::*;
 
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
+    const TEST_DOWNLOAD_URL: &str =
+        "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb";
 
     async fn setup_test_download(url_str: &str) -> Test<(HttpDownload, TempDir)> {
         let tmp_dir = TempDir::new()?;
@@ -203,11 +199,7 @@ mod test {
         // Needed because if the tmp dir is dropped it is actually deleted in the Drop impl
         let mut anti_drop = Vec::new();
         for _ in 0..60 {
-            let (download, _tmp_dir) = setup_test_download(
-                "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb",
-            )
-            .await
-            .unwrap();
+            let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await.unwrap();
             let download = Arc::new(download);
             let (tx, rx) = tokio::sync::oneshot::channel();
             downloads.push(download.clone());
@@ -236,7 +228,7 @@ mod test {
     #[tokio::test]
     async fn server_data_is_requested_on_create_test() -> Test<()> {
         // given
-        let url_str = "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb";
+        let url_str = TEST_DOWNLOAD_URL;
         let url = Url::parse(url_str)?;
         let file_path = PathBuf::from(parse_filename(&url).unwrap());
         // when creating a download, server data is present in the download struct
@@ -252,11 +244,9 @@ mod test {
     #[tokio::test]
     async fn default_download_test() -> Test<()> {
         // given
-        let (download, _tmp_dir) =
-            setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
-                .await?;
+        let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         // when
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
         let downloaded_bytes = download.start(rx).await?;
         // then
         assert_eq!(
@@ -278,12 +268,10 @@ mod test {
         let mut config = HttpDownloadConfig::default();
         config.chunk_size = 1024 * 1029;
         // and
-        let (mut download, _tmp_dir) =
-            setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
-                .await?;
+        let (mut download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         download.config = config;
         // when
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (_tx, rx) = tokio::sync::oneshot::channel();
         let downloaded_bytes = download.start(rx).await?;
         // then
         assert_eq!(
@@ -301,9 +289,7 @@ mod test {
 
     #[tokio::test]
     async fn download_can_be_stopped_test() -> Test<()> {
-        let (download, _tmp_dir) =
-            setup_test_download("https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb")
-                .await?;
+        let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let content_length = download.content_length;
         let handle = tokio::spawn(async move { download.start(rx).await });
