@@ -5,10 +5,13 @@ use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::sync::oneshot::{channel, Receiver, Sender};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::util::{file_size, parse_filename, supports_byte_ranges};
 use crate::{download_config::HttpDownloadConfig, Error, Result, DEFAULT_USER_AGENT};
+
+#[derive(Debug, Clone)]
+pub enum DownloadUpdate {}
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
@@ -30,6 +33,8 @@ pub struct HttpDownload {
     * This value gets updated by the struct
      */
     pub supports_byte_ranges: bool,
+
+    pub update_channel: mpsc::Sender<DownloadUpdate>,
     /**
      * Currently used HttpClient
      */
@@ -38,7 +43,7 @@ pub struct HttpDownload {
 
 impl HttpDownload {
     /** Starts the Download from scratch */
-    async fn start(&self, rx: Receiver<()>) -> Result<u64> {
+    pub async fn start(&self, rx: oneshot::Receiver<()>) -> Result<u64> {
         let resp = self
             .client
             .get(self.url.as_ref())
@@ -49,7 +54,7 @@ impl HttpDownload {
         self.progress(resp, file_handler, rx).await
     }
 
-    async fn resume(&self, rx: Receiver<()>) -> Result<u64> {
+    pub async fn resume(&self, rx: oneshot::Receiver<()>) -> Result<u64> {
         let downloaded_bytes = self.get_bytes_on_disk().await;
         if downloaded_bytes == self.content_length {
             log::warn!(
@@ -90,6 +95,7 @@ impl HttpDownload {
         url: Url,
         file_path: PathBuf,
         client: Client,
+        update_channel: mpsc::Sender<DownloadUpdate>,
         config: Option<HttpDownloadConfig>,
     ) -> Result<Self> {
         // If no configuration is passed the default one is copied
@@ -99,6 +105,7 @@ impl HttpDownload {
             file_path,
             config,
             client,
+            update_channel,
             supports_byte_ranges: false,
             content_length: 0u64,
         };
@@ -110,7 +117,7 @@ impl HttpDownload {
         &self,
         resp: Response,
         mut file_handler: File,
-        mut stopper: Receiver<()>,
+        mut stopper: oneshot::Receiver<()>,
     ) -> Result<u64> {
         let mut downloaded_bytes = 0u64;
         let mut stream = resp.bytes_stream();
@@ -188,7 +195,8 @@ mod test {
         let url = Url::parse(url_str)?;
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
         let client = Client::new();
-        let download = HttpDownload::new(url, file_path, client, None).await?;
+        let (update_channel, _) = mpsc::channel(1);
+        let download = HttpDownload::new(url, file_path, client, update_channel, None).await?;
         Ok((download, tmp_dir))
     }
 
@@ -231,8 +239,10 @@ mod test {
         let url_str = TEST_DOWNLOAD_URL;
         let url = Url::parse(url_str)?;
         let file_path = PathBuf::from(parse_filename(&url).unwrap());
+        let (update_channel, rx) = mpsc::channel(1);
         // when creating a download, server data is present in the download struct
-        let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
+        let download =
+            HttpDownload::new(url, file_path, Client::new(), update_channel, None).await?;
         // then
         assert!(
             download.supports_byte_ranges,

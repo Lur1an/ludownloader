@@ -17,9 +17,12 @@ enum Download {
 
 #[derive(Debug)]
 struct DownloaderItem {
-    id: Uuid,
+    pub id: Uuid,
     download: Download,
-    handle: Option<JoinHandle<Result<u64>>>,
+    handle: Option<(
+        JoinHandle<download::Result<u64>>,
+        tokio::sync::oneshot::Sender<()>,
+    )>,
 }
 
 impl DownloaderItem {
@@ -28,6 +31,21 @@ impl DownloaderItem {
             id: Uuid::new_v4(),
             download,
             handle: None,
+        }
+    }
+
+    fn is_running(&self) -> bool {
+        self.handle.is_some()
+    }
+
+    fn start(&mut self) {
+        match &self.download {
+            Download::HttpDownload(download) => {
+                let (tx, rx) = tokio::sync::oneshot::channel();
+                let download_arc = download.clone();
+                let handle = tokio::spawn(async move { download_arc.start(rx).await });
+                self.handle = Some((handle, tx));
+            }
         }
     }
 }
