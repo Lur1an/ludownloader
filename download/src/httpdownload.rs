@@ -15,35 +15,21 @@ pub enum DownloadUpdate {}
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
-    /**
-     * Download Link
-     */
     pub url: Url,
-    /**
-     * Target file for the download
-     */
+    pub id: uuid::Uuid,
     pub file_path: PathBuf,
-
     pub config: HttpDownloadConfig,
-    /** Size of the download in bytes
-     */
     pub content_length: u64,
-    /**
-    If the server for the Download supports bytes
-    * This value gets updated by the struct
-     */
     pub supports_byte_ranges: bool,
-
-    pub update_channel: mpsc::Sender<DownloadUpdate>,
-    /**
-     * Currently used HttpClient
-     */
     client: Client,
 }
 
 impl HttpDownload {
-    /** Starts the Download from scratch */
-    pub async fn start(&self, rx: oneshot::Receiver<()>) -> Result<u64> {
+    pub async fn start(
+        &self,
+        rx: oneshot::Receiver<()>,
+        update_sender: mpsc::Sender<DownloadUpdate>,
+    ) -> Result<u64> {
         let resp = self
             .client
             .get(self.url.as_ref())
@@ -51,10 +37,14 @@ impl HttpDownload {
             .send()
             .await?;
         let file_handler = File::create(&self.file_path).await?;
-        self.progress(resp, file_handler, rx).await
+        self.progress(resp, file_handler, rx, update_sender).await
     }
 
-    pub async fn resume(&self, rx: oneshot::Receiver<()>) -> Result<u64> {
+    pub async fn resume(
+        &self,
+        rx: oneshot::Receiver<()>,
+        update_sender: mpsc::Sender<DownloadUpdate>,
+    ) -> Result<u64> {
         let downloaded_bytes = self.get_bytes_on_disk().await;
         if downloaded_bytes == self.content_length {
             log::warn!(
@@ -69,7 +59,7 @@ impl HttpDownload {
                 self.url
             );
             log::info!("Starting from scratch: {}", self.url);
-            return self.start(rx).await;
+            return self.start(rx, update_sender).await;
         }
         let file_handler = OpenOptions::new()
             .write(true)
@@ -84,28 +74,24 @@ impl HttpDownload {
             .header(RANGE, format!("bytes={}-", downloaded_bytes))
             .send()
             .await?;
-        self.progress(resp, file_handler, rx).await
+        self.progress(resp, file_handler, rx, update_sender).await
     }
 
-    /** Initializes a new HttpDownload.
-     *  file_path: Path to the file, doesn't matter if it exists already.
-     *  config: optional HttpDownloadConfig (to configure timeout, headers, retries, etc...)
-     */
     pub async fn new(
         url: Url,
         file_path: PathBuf,
         client: Client,
-        update_channel: mpsc::Sender<DownloadUpdate>,
         config: Option<HttpDownloadConfig>,
     ) -> Result<Self> {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_default();
+        let id = uuid::Uuid::new_v4();
         let mut download = HttpDownload {
+            id,
             url,
             file_path,
             config,
             client,
-            update_channel,
             supports_byte_ranges: false,
             content_length: 0u64,
         };
@@ -118,6 +104,7 @@ impl HttpDownload {
         resp: Response,
         mut file_handler: File,
         mut stopper: oneshot::Receiver<()>,
+        update_sender: mpsc::Sender<DownloadUpdate>,
     ) -> Result<u64> {
         let mut downloaded_bytes = 0u64;
         let mut stream = resp.bytes_stream();
@@ -195,8 +182,7 @@ mod test {
         let url = Url::parse(url_str)?;
         let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
         let client = Client::new();
-        let (update_channel, _) = mpsc::channel(1);
-        let download = HttpDownload::new(url, file_path, client, update_channel, None).await?;
+        let download = HttpDownload::new(url, file_path, client, None).await?;
         Ok((download, tmp_dir))
     }
 
@@ -210,8 +196,9 @@ mod test {
             let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await.unwrap();
             let download = Arc::new(download);
             let (tx, rx) = tokio::sync::oneshot::channel();
+            let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
             downloads.push(download.clone());
-            let fut = async move { download.start(rx).await };
+            let fut = async move { download.start(rx, update_sender).await };
             let handle = tokio::spawn(fut);
             anti_drop.push((_tmp_dir, tx));
             handles.push(handle);
@@ -239,10 +226,8 @@ mod test {
         let url_str = TEST_DOWNLOAD_URL;
         let url = Url::parse(url_str)?;
         let file_path = PathBuf::from(parse_filename(&url).unwrap());
-        let (update_channel, rx) = mpsc::channel(1);
         // when creating a download, server data is present in the download struct
-        let download =
-            HttpDownload::new(url, file_path, Client::new(), update_channel, None).await?;
+        let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
         // then
         assert!(
             download.supports_byte_ranges,
@@ -257,7 +242,8 @@ mod test {
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         // when
         let (_tx, rx) = tokio::sync::oneshot::channel();
-        let downloaded_bytes = download.start(rx).await?;
+        let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
+        let downloaded_bytes = download.start(rx, update_sender).await?;
         // then
         assert_eq!(
             download.content_length,
@@ -282,7 +268,8 @@ mod test {
         download.config = config;
         // when
         let (_tx, rx) = tokio::sync::oneshot::channel();
-        let downloaded_bytes = download.start(rx).await?;
+        let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
+        let downloaded_bytes = download.start(rx, update_sender).await?;
         // then
         assert_eq!(
             download.content_length,
@@ -302,7 +289,8 @@ mod test {
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let content_length = download.content_length;
-        let handle = tokio::spawn(async move { download.start(rx).await });
+        let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
+        let handle = tokio::spawn(async move { download.start(rx, update_sender).await });
         tx.send(()).expect("Message needs to be sent");
         let join_result = handle.await;
         let downloaded_bytes = join_result??;

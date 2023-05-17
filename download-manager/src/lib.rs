@@ -1,8 +1,8 @@
 use std::{collections::HashMap, sync::Arc};
 
-use download::httpdownload::HttpDownload;
+use download::httpdownload::{DownloadUpdate, HttpDownload};
 use thiserror::Error;
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -15,10 +15,17 @@ enum Download {
     HttpDownload(Arc<HttpDownload>),
 }
 
+impl Download {
+    fn id(&self) -> Uuid {
+        match self {
+            Download::HttpDownload(download) => download.id,
+        }
+    }
+}
+
 #[derive(Debug)]
 struct DownloaderItem {
-    pub id: Uuid,
-    download: Download,
+    pub download: Download,
     handle: Option<(
         JoinHandle<download::Result<u64>>,
         tokio::sync::oneshot::Sender<()>,
@@ -28,7 +35,6 @@ struct DownloaderItem {
 impl DownloaderItem {
     fn new(download: Download) -> Self {
         DownloaderItem {
-            id: Uuid::new_v4(),
             download,
             handle: None,
         }
@@ -43,7 +49,10 @@ impl DownloaderItem {
             Download::HttpDownload(download) => {
                 let (tx, rx) = tokio::sync::oneshot::channel();
                 let download_arc = download.clone();
-                let handle = tokio::spawn(async move { download_arc.start(rx).await });
+                let (update_sender, _) = mpsc::channel(1000);
+
+                let handle =
+                    tokio::spawn(async move { download_arc.start(rx, update_sender).await });
                 self.handle = Some((handle, tx));
             }
         }
@@ -52,22 +61,24 @@ impl DownloaderItem {
 
 #[derive(Debug)]
 struct DownloadManager {
-    /** The list of items the manager is handling
-     * The items could be running downloads, captchas, etc.
-     */
+    update_receiver: mpsc::Receiver<DownloadUpdate>,
+    update_sender: mpsc::Sender<DownloadUpdate>,
     items: HashMap<Uuid, DownloaderItem>,
 }
 
 impl DownloadManager {
     fn new() -> Self {
+        let (update_sender, update_receiver) = mpsc::channel::<DownloadUpdate>(1000);
         DownloadManager {
+            update_receiver,
+            update_sender,
             items: HashMap::new(),
         }
     }
 
     fn add(&mut self, download: Download) {
         let item = DownloaderItem::new(download);
-        self.items.insert(item.id, item);
+        self.items.insert(item.download.id(), item);
     }
 }
 
