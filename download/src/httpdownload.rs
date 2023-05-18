@@ -27,8 +27,8 @@ pub struct HttpDownload {
 impl HttpDownload {
     pub async fn start(
         &self,
-        rx: oneshot::Receiver<()>,
-        update_sender: mpsc::Sender<DownloadUpdate>,
+        stop_ch: oneshot::Receiver<()>,
+        update_ch: mpsc::Sender<DownloadUpdate>,
     ) -> Result<u64> {
         let resp = self
             .client
@@ -37,13 +37,13 @@ impl HttpDownload {
             .send()
             .await?;
         let file_handler = File::create(&self.file_path).await?;
-        self.progress(resp, file_handler, rx, update_sender).await
+        self.progress(resp, file_handler, stop_ch, update_ch).await
     }
 
     pub async fn resume(
         &self,
-        rx: oneshot::Receiver<()>,
-        update_sender: mpsc::Sender<DownloadUpdate>,
+        stop_ch: oneshot::Receiver<()>,
+        update_ch: mpsc::Sender<DownloadUpdate>,
     ) -> Result<u64> {
         let downloaded_bytes = self.get_bytes_on_disk().await;
         if downloaded_bytes == self.content_length {
@@ -59,7 +59,7 @@ impl HttpDownload {
                 self.url
             );
             log::info!("Starting from scratch: {}", self.url);
-            return self.start(rx, update_sender).await;
+            return self.start(stop_ch, update_ch).await;
         }
         let file_handler = OpenOptions::new()
             .write(true)
@@ -74,7 +74,7 @@ impl HttpDownload {
             .header(RANGE, format!("bytes={}-", downloaded_bytes))
             .send()
             .await?;
-        self.progress(resp, file_handler, rx, update_sender).await
+        self.progress(resp, file_handler, stop_ch, update_ch).await
     }
 
     pub async fn new(
@@ -103,8 +103,8 @@ impl HttpDownload {
         &self,
         resp: Response,
         mut file_handler: File,
-        mut stopper: oneshot::Receiver<()>,
-        update_sender: mpsc::Sender<DownloadUpdate>,
+        mut stop_ch: oneshot::Receiver<()>,
+        update_ch: mpsc::Sender<DownloadUpdate>,
     ) -> Result<u64> {
         let mut downloaded_bytes = 0u64;
         let mut stream = resp.bytes_stream();
@@ -112,7 +112,7 @@ impl HttpDownload {
             let item = chunk?;
             let bytes_written = file_handler.write(&item).await? as u64;
             downloaded_bytes += bytes_written;
-            match stopper.try_recv() {
+            match stop_ch.try_recv() {
                 Ok(_) => {
                     log::info!("Download stop signal received for: {}", self.url);
                     return Ok(downloaded_bytes);

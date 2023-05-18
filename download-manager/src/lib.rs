@@ -1,5 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
+use async_trait::async_trait;
 use download::httpdownload::{DownloadUpdate, HttpDownload};
 use thiserror::Error;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -61,16 +62,19 @@ impl DownloaderItem {
 
 #[derive(Debug)]
 struct DownloadManager {
-    update_receiver: mpsc::Receiver<DownloadUpdate>,
     update_sender: mpsc::Sender<DownloadUpdate>,
     items: HashMap<Uuid, DownloaderItem>,
 }
 
+#[async_trait]
+trait UpdateConsumer {
+    async fn consume(&mut self, update: DownloadUpdate);
+}
+
 impl DownloadManager {
-    fn new() -> Self {
-        let (update_sender, update_receiver) = mpsc::channel::<DownloadUpdate>(1000);
+    fn new(update_sender: mpsc::Sender<DownloadUpdate>) -> Self {
+        let (update_recv, update_send) = mpsc::channel::<DownloadUpdate>(1000);
         DownloadManager {
-            update_receiver,
             update_sender,
             items: HashMap::new(),
         }
@@ -79,6 +83,12 @@ impl DownloadManager {
     fn add(&mut self, download: Download) {
         let item = DownloaderItem::new(download);
         self.items.insert(item.download.id(), item);
+    }
+
+    fn start(&mut self, id: Uuid) -> Result<()> {
+        let item = self.items.get_mut(&id).unwrap();
+        item.start();
+        Ok(())
     }
 }
 
@@ -93,7 +103,8 @@ mod test {
 
     #[tokio::test]
     async fn add_download() -> Test<()> {
-        let mut manager = DownloadManager::new();
+        let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
+        let mut manager = DownloadManager::new(update_sender);
         Ok(())
     }
 }

@@ -161,6 +161,7 @@ dependencies = [
 name = "download-manager"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "directories 5.0.1",
  "download",
  "env_logger",
