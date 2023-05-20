@@ -45,13 +45,13 @@ impl HttpDownload {
         stop_ch: oneshot::Receiver<()>,
         update_ch: mpsc::Sender<DownloadUpdate>,
     ) -> Result<u64> {
-        let downloaded_bytes = self.get_bytes_on_disk().await;
-        if downloaded_bytes == self.content_length {
+        let bytes_on_disk = self.get_bytes_on_disk().await;
+        if bytes_on_disk == self.content_length {
             log::warn!(
-                "Tried downloading a file that was already downloaded: {}",
+                "Tried downloading a file that was already completely downloaded: {}",
                 self.url
             );
-            return Err(Error::DownloadComplete(downloaded_bytes));
+            return Err(Error::DownloadComplete(bytes_on_disk));
         }
         if !self.supports_byte_ranges {
             log::warn!(
@@ -71,10 +71,10 @@ impl HttpDownload {
             .client
             .get(self.url.as_ref())
             .headers(self.config.headers.clone())
-            .header(RANGE, format!("bytes={}-", downloaded_bytes))
+            .header(RANGE, format!("bytes={}-", bytes_on_disk))
             .send()
             .await?;
-        self.progress(resp, file_handler, stop_ch, update_ch).await
+        Ok(bytes_on_disk + self.progress(resp, file_handler, stop_ch, update_ch).await?)
     }
 
     pub async fn new(
@@ -125,6 +125,11 @@ impl HttpDownload {
                 }
             }
         }
+        log::info!(
+            "Completed download: {}, bytes: {}",
+            self.url,
+            downloaded_bytes
+        );
         Ok(downloaded_bytes)
     }
 
@@ -174,7 +179,7 @@ mod test {
 
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
     const TEST_DOWNLOAD_URL: &str =
-        "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb";
+        "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
 
     async fn setup_test_download(url_str: &str) -> Test<(HttpDownload, TempDir)> {
         let tmp_dir = TempDir::new()?;
@@ -285,18 +290,36 @@ mod test {
     }
 
     #[tokio::test]
-    async fn download_can_be_stopped_test() -> Test<()> {
+    async fn download_can_be_stopped_and_resumed_test() -> Test<()> {
+        // setup
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let (tx, rx) = tokio::sync::oneshot::channel();
         let content_length = download.content_length;
         let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
-        let handle = tokio::spawn(async move { download.start(rx, update_sender).await });
+        let download = Arc::new(download);
+        let download_clone = download.clone();
+        let sender_clone = update_sender.clone();
+        let handle = tokio::spawn(async move { download_clone.start(rx, sender_clone).await });
         tx.send(()).expect("Message needs to be sent");
         let join_result = handle.await;
         let downloaded_bytes = join_result??;
         assert!(
             downloaded_bytes < content_length,
             "The downloaded bytes need to be less than the content_length when the download is stopped prematurely"
+        );
+        // Start the download again
+        let (_tx, rx) = tokio::sync::oneshot::channel();
+        let downloaded_bytes = download.resume(rx, update_sender).await?;
+        let bytes_on_disk = download.get_bytes_on_disk().await;
+        assert_eq!(
+            downloaded_bytes, 
+            content_length,
+            "The downloaded bytes need to be equal to the content_length when the download is finished"
+        );
+        assert_eq!(
+            bytes_on_disk, 
+            content_length,
+            "The bytes on disk need to be equal to the content_length when the download is finished"
         );
         Ok(())
     }
