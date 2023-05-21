@@ -15,6 +15,8 @@ pub enum Error {
     DownloadError(#[from] download::Error),
     #[error("JoinError for download: {0}")]
     TokioThreadingError(#[from] tokio::task::JoinError),
+    #[error("Download is not running")]
+    DownloadNotRunning,
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -73,12 +75,12 @@ impl DownloaderItem {
     }
 
     async fn complete(&mut self) -> Result<u64> {
-        todo!();
-        if let Some((handle, tx)) = self.handle.take() {
+        if let Some((handle, _tx)) = self.handle.take() {
             let result = handle.await??;
             return Ok(result);
+        } else {
+            return Err(Error::DownloadNotRunning);
         }
-        self.handle = None;
     }
 }
 
@@ -154,6 +156,32 @@ impl DownloadManager {
             )))
         }
     }
+
+    async fn stop(&mut self, id: Uuid) -> Result<u64> {
+        log::info!("Stop action requested for download: {}", id);
+        if let Some(mut item) = self.items.remove(&id) {
+            log::info!("Stopping download {}", id);
+            item.stop().await
+        } else {
+            Err(Error::DownloadAccess(format!(
+                "Download with id {} not found",
+                id
+            )))
+        }
+    }
+
+    async fn complete(&mut self, id: Uuid) -> Result<u64> {
+        log::info!("Complete action requested for download: {}", id);
+        if let Some(mut item) = self.items.remove(&id) {
+            log::info!("Running download {} to completion.", id);
+            item.complete().await
+        } else {
+            Err(Error::DownloadAccess(format!(
+                "Download with id {} not found",
+                id
+            )))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -174,11 +202,18 @@ mod test {
         let tmp_path = tmp_dir.path();
         let client = Client::new();
         let file_path = tmp_path.join("deez.nuts");
-        let download =
-            HttpDownload::new(Url::parse(TEST_DOWNLOAD_URL)?, file_path, client, None).await?;
+        let download = HttpDownload::new(Url::parse(TEST_DOWNLOAD_URL)?, file_path, client, None)
+            .await
+            .expect("Failed creating httpdownload");
         let download = Download::HttpDownload(Arc::new(download));
         let id = manager.add(download)?;
         manager.start(id)?;
+        let downloaded_bytes = manager.complete(id).await?;
+        assert_ne!(
+            downloaded_bytes, 0,
+            "Downloaded bytes should be greater than 0"
+        );
+
         Ok(())
     }
 }
