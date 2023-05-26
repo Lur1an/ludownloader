@@ -1,7 +1,7 @@
 use std::{collections::HashMap, sync::Arc};
 
+use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use async_trait::async_trait;
-use download::httpdownload::{DownloadUpdate, HttpDownload};
 use reqwest::Client;
 use thiserror::Error;
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -12,7 +12,7 @@ pub enum Error {
     #[error("Error while trying to access download in map: {0}")]
     DownloadAccess(String),
     #[error("Error occurred while downloading: {0}")]
-    DownloadError(#[from] download::Error),
+    DownloadError(#[from] crate::httpdownload::download::Error),
     #[error("JoinError for download: {0}")]
     TokioThreadingError(#[from] tokio::task::JoinError),
     #[error("Download is not running")]
@@ -22,31 +22,18 @@ pub enum Error {
 type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
-enum Download {
-    HttpDownload(Arc<HttpDownload>),
-}
-
-impl Download {
-    fn id(&self) -> Uuid {
-        match self {
-            Download::HttpDownload(download) => download.id,
-        }
-    }
-}
-
-#[derive(Debug)]
 struct DownloaderItem {
-    download: Download,
+    download: Arc<HttpDownload>,
     handle: Option<(
-        JoinHandle<download::Result<u64>>,
+        JoinHandle<crate::httpdownload::download::Result<u64>>,
         tokio::sync::oneshot::Sender<()>,
     )>,
 }
 
 impl DownloaderItem {
-    fn new(download: Download) -> Self {
+    fn new(download: HttpDownload) -> Self {
         DownloaderItem {
-            download,
+            download: Arc::new(download),
             handle: None,
         }
     }
@@ -56,21 +43,21 @@ impl DownloaderItem {
     }
 
     fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
-        match &self.download {
-            Download::HttpDownload(download) => {
-                let (tx, rx) = tokio::sync::oneshot::channel();
-                let download_arc = download.clone();
-                let thread_handle = if resume {
-                    tokio::spawn(async move { download_arc.start(rx, update_ch).await })
-                } else {
-                    tokio::spawn(async move { download_arc.resume(rx, update_ch).await })
-                };
-                self.handle = Some((thread_handle, tx));
-            }
-        }
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let download_arc = self.download.clone();
+        let thread_handle = if resume {
+            tokio::spawn(async move { download_arc.start(rx, update_ch).await })
+        } else {
+            tokio::spawn(async move { download_arc.resume(rx, update_ch).await })
+        };
+        self.handle = Some((thread_handle, tx));
     }
 
     async fn stop(&mut self) -> Result<u64> {
+        if let Some((handle, tx)) = self.handle.take() {
+            let send_result = tx.send(());
+        }
+
         todo!()
     }
 
@@ -137,9 +124,9 @@ impl DownloadManager {
         }
     }
 
-    fn add(&mut self, download: Download) -> Result<Uuid> {
+    fn add(&mut self, download: HttpDownload) -> Result<Uuid> {
         let item = DownloaderItem::new(download);
-        let id = item.download.id();
+        let id = item.download.id;
         self.items.insert(id, item);
         Ok(id)
     }
@@ -192,7 +179,7 @@ mod test {
     use tempfile::TempDir;
 
     const TEST_DOWNLOAD_URL: &str =
-        "https://dl.discordapp.net/apps/linux/0.0.26/discord-0.0.26.deb";
+        "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
 
     #[tokio::test]
@@ -205,10 +192,10 @@ mod test {
         let download = HttpDownload::new(Url::parse(TEST_DOWNLOAD_URL)?, file_path, client, None)
             .await
             .expect("Failed creating httpdownload");
-        let download = Download::HttpDownload(Arc::new(download));
         let id = manager.add(download)?;
         manager.start(id)?;
-        let downloaded_bytes = manager.complete(id).await?;
+        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        let downloaded_bytes = manager.stop(id).await?;
         assert_ne!(
             downloaded_bytes, 0,
             "Downloaded bytes should be greater than 0"

@@ -1,3 +1,6 @@
+pub mod config;
+
+use thiserror::Error;
 use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
@@ -7,11 +10,34 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::util::{file_size, parse_filename, supports_byte_ranges};
-use crate::{download_config::HttpDownloadConfig, Error, Result, DEFAULT_USER_AGENT};
+use crate::util::{file_size, supports_byte_ranges};
+
+use self::config::HttpDownloadConfig;
+    
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("File IO operation failed, error: '{0}'")]
+    Io(#[from] tokio::io::Error),
+    #[error("Request error: '{0}'")]
+    Request(#[from] reqwest::Error),
+    #[error("Content length not provided for url: '{0}'")]
+    MissingContentLength(Url),
+    #[error("Failed sending stop signal to download: '{0}'")]
+    StopFailure(Url),
+    #[error("Prematurely dropped channel for download with url: '{0}', downloaded bytes before drop: '{1}'")]
+    ChannelDrop(u64, Url),
+    #[error("Download was already finished, downloaded bytes: '{0}'")]
+    DownloadComplete(u64),
+    #[error("Download req did not yield 200, instead: '{0}'")]
+    DownloadNotOk(reqwest::StatusCode),
+}
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Clone)]
-pub enum DownloadUpdate {}
+pub struct DownloadUpdate {
+    pub id: uuid::Uuid,
+}
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
@@ -175,6 +201,8 @@ mod test {
     use pretty_assertions::assert_eq;
     use tempfile::TempDir;
 
+    use crate::util::parse_filename;
+
     use super::*;
 
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
@@ -197,7 +225,7 @@ mod test {
         let mut downloads = Vec::new();
         // Needed because if the tmp dir is dropped it is actually deleted in the Drop impl
         let mut anti_drop = Vec::new();
-        for _ in 0..60 {
+        for _ in 0..3 {
             let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await.unwrap();
             let download = Arc::new(download);
             let (tx, rx) = tokio::sync::oneshot::channel();

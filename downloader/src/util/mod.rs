@@ -1,9 +1,10 @@
-use std::path::Path;
-use reqwest::header::{HeaderMap, HeaderValue};
-use reqwest::{header, Url};
+use reqwest::header::HeaderMap;
+use reqwest::{header, Client, Url};
+use std::error::Error;
+use std::path::{Path, PathBuf};
+use tempfile::TempDir;
 
-use std::fs::File;
-use std::io::Write;
+use crate::httpdownload::download::HttpDownload;
 
 /**
  * Tries to extract file size in bytes from given Path
@@ -40,12 +41,22 @@ pub fn supports_byte_ranges(headers: &HeaderMap) -> bool {
     return false;
 }
 
+pub async fn setup_test_download(url_str: &str) -> Result<(HttpDownload, TempDir), Box<dyn Error>> {
+    let tmp_dir = TempDir::new()?;
+    let tmp_path = tmp_dir.path();
+    let url = Url::parse(url_str)?;
+    let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
+    let client = Client::new();
+    let download = HttpDownload::new(url, file_path, client, None).await?;
+    Ok((download, tmp_dir))
+}
 #[cfg(test)]
 mod test {
     use super::*;
-    use std::error::Error;
-    use tempfile::TempDir;
     use pretty_assertions::assert_eq;
+    use reqwest::header::HeaderValue;
+    use std::{error::Error, fs::File, io::Write};
+    use tempfile::TempDir;
     #[test]
     fn supports_bytes_test() {
         // Given

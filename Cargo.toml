@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "download",
-    "download-manager",
+    "downloader",
     "server"
 ]
