@@ -5,10 +5,11 @@ use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, RwLock};
 
 use crate::util::{file_size, supports_byte_ranges};
 
@@ -65,6 +66,7 @@ impl HttpDownload {
         let file_handler = File::create(&self.file_path).await?;
         self.progress(resp, file_handler, stop_ch, update_ch).await
     }
+
 
     pub async fn resume(
         &self,

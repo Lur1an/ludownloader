@@ -4,7 +4,10 @@ use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use async_trait::async_trait;
 use reqwest::Client;
 use thiserror::Error;
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::{
+    sync::{mpsc, RwLock},
+    task::JoinHandle,
+};
 use uuid::Uuid;
 
 #[derive(Debug, Error)]
@@ -23,17 +26,32 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
 struct DownloaderItem {
-    download: Arc<HttpDownload>,
+    download: Arc<RwLock<HttpDownload>>,
     handle: Option<(
         JoinHandle<crate::httpdownload::download::Result<u64>>,
         tokio::sync::oneshot::Sender<()>,
     )>,
 }
 
+async fn run_download_locked(
+    download: Arc<RwLock<HttpDownload>>,
+    rx: tokio::sync::oneshot::Receiver<()>,
+    update_ch: mpsc::Sender<DownloadUpdate>,
+    resume: bool,
+) -> super::download::Result<u64> {
+    let download = download.read().await;
+    let result = if resume {
+        download.resume(rx, update_ch).await
+    } else {
+        download.start(rx, update_ch).await
+    };
+    result
+}
+
 impl DownloaderItem {
     fn new(download: HttpDownload) -> Self {
         DownloaderItem {
-            download: Arc::new(download),
+            download: Arc::new(RwLock::new(download)),
             handle: None,
         }
     }
@@ -45,11 +63,10 @@ impl DownloaderItem {
     fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
         let (tx, rx) = tokio::sync::oneshot::channel();
         let download_arc = self.download.clone();
-        let thread_handle = if resume {
-            tokio::spawn(async move { download_arc.start(rx, update_ch).await })
-        } else {
-            tokio::spawn(async move { download_arc.resume(rx, update_ch).await })
-        };
+        let thread_handle =
+            tokio::spawn(
+                async move { run_download_locked(download_arc, rx, update_ch, resume).await },
+            );
         self.handle = Some((thread_handle, tx));
     }
 
@@ -125,8 +142,8 @@ impl DownloadManager {
     }
 
     fn add(&mut self, download: HttpDownload) -> Result<Uuid> {
+        let id = download.id;
         let item = DownloaderItem::new(download);
-        let id = item.download.id;
         self.items.insert(id, item);
         Ok(id)
     }
