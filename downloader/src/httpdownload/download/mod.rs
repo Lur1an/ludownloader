@@ -11,7 +11,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot, RwLock};
 
-use crate::util::{file_size, supports_byte_ranges};
+use crate::util::{file_size, supports_byte_ranges, mb};
 
 use self::config::HttpDownloadConfig;
     
@@ -43,7 +43,7 @@ pub struct DownloadUpdate {
 
 #[derive(Debug)]
 pub enum UpdateType {
-    Completed,
+    Stop,
     Progress(u64),
     Error(Error)
 }
@@ -167,7 +167,7 @@ impl HttpDownload {
                 }
             }
         }
-        if downloaded_bytes != self.content_length {
+        if downloaded_bytes < self.content_length {
             log::error!(
                 "Download ended before completion, downloaded bytes: {}, content length: {}",
                 downloaded_bytes,
@@ -176,9 +176,9 @@ impl HttpDownload {
             return Err(Error::StreamEndedBeforeCompletion(downloaded_bytes));
         }
         log::info!(
-            "Download finished: {}, bytes: {}",
+            "Download completed successfully: {}, {}MB",
             self.url,
-            downloaded_bytes
+            mb(downloaded_bytes)
         );
         Ok(downloaded_bytes)
     }
@@ -214,7 +214,7 @@ impl HttpDownload {
         Ok(())
     }
 
-    async fn get_bytes_on_disk(&self) -> u64 {
+    pub async fn get_bytes_on_disk(&self) -> u64 {
         file_size(&self.file_path).await
     }
 }

@@ -1,11 +1,12 @@
 use std::{collections::HashMap, sync::Arc};
 
+use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use async_trait::async_trait;
 use reqwest::Client;
 use thiserror::Error;
 use tokio::{
-    sync::{mpsc, RwLock},
+    sync::{mpsc, oneshot, RwLock},
     task::JoinHandle,
 };
 use uuid::Uuid;
@@ -15,7 +16,7 @@ pub enum Error {
     #[error("Error while trying to access download in map: {0}")]
     Access(String),
     #[error("Error occurred while downloading: {0}")]
-    HttpDownloadError(#[from] crate::httpdownload::download::Error),
+    HttpDownloadError(#[from] download::Error),
     #[error("JoinError for download: {0}")]
     TokioThreadingError(#[from] tokio::task::JoinError),
     #[error("Download is not running")]
@@ -27,43 +28,7 @@ type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug)]
 struct DownloaderItem {
     download: Arc<RwLock<HttpDownload>>,
-    handle: Option<(
-        JoinHandle<crate::httpdownload::download::Result<u64>>,
-        tokio::sync::oneshot::Sender<()>,
-    )>,
-}
-
-async fn run_download_locked(
-    download: Arc<RwLock<HttpDownload>>,
-    rx: tokio::sync::oneshot::Receiver<()>,
-    update_ch: mpsc::Sender<DownloadUpdate>,
-    resume: bool,
-) -> super::download::Result<u64> {
-    let download = download.read().await;
-    let update_ch_cl = update_ch.clone();
-    let result = if resume {
-        download.resume(rx, update_ch).await
-    } else {
-        download.start(rx, update_ch).await
-    };
-    if let Err(e) = &result {
-        match e {
-            crate::httpdownload::download::Error::Io(_) => todo!(),
-            crate::httpdownload::download::Error::Request(_) => todo!(),
-            crate::httpdownload::download::Error::MissingContentLength(_) => todo!(),
-            crate::httpdownload::download::Error::ChannelDrop(_, _) => todo!(),
-            crate::httpdownload::download::Error::DownloadComplete(_) => todo!(),
-            crate::httpdownload::download::Error::DownloadNotOk(_, _) => todo!(),
-            crate::httpdownload::download::Error::StreamEndedBeforeCompletion(_) => todo!(),
-        }
-    }
-    let _ = update_ch_cl
-        .send(DownloadUpdate {
-            id: download.id,
-            update_type: crate::httpdownload::download::UpdateType::Completed,
-        })
-        .await;
-    result
+    handle: Option<(JoinHandle<()>, oneshot::Sender<()>)>,
 }
 
 impl DownloaderItem {
@@ -79,28 +44,47 @@ impl DownloaderItem {
     }
 
     fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
-        let (tx, rx) = tokio::sync::oneshot::channel();
+        let (tx, rx) = oneshot::channel();
         let download_arc = self.download.clone();
-        let thread_handle =
-            tokio::spawn(
-                async move { run_download_locked(download_arc, rx, update_ch, resume).await },
-            );
+        let thread_handle = tokio::spawn(async move {
+            let download = download_arc.read().await;
+            let update_ch_cl = update_ch.clone();
+            let result = if resume {
+                download.resume(rx, update_ch).await
+            } else {
+                download.start(rx, update_ch).await
+            };
+            if let Err(e) = result {
+                let _ = update_ch_cl
+                    .send(DownloadUpdate {
+                        id: download.id,
+                        update_type: download::UpdateType::Error(e),
+                    })
+                    .await;
+            }
+            let _ = update_ch_cl
+                .send(DownloadUpdate {
+                    id: download.id,
+                    update_type: download::UpdateType::Stop,
+                })
+                .await;
+        });
         self.handle = Some((thread_handle, tx));
     }
 
-    async fn stop(&mut self) -> Result<u64> {
+    async fn stop(&mut self) -> Result<()> {
         if let Some((handle, tx)) = self.handle.take() {
             let _ = tx.send(());
-            let result = handle.await??;
+            let result = handle.await?;
             Ok(result)
         } else {
             Err(Error::DownloadNotRunning)
         }
     }
 
-    async fn complete(&mut self) -> Result<u64> {
+    async fn complete(&mut self) -> Result<()> {
         if let Some((handle, _tx)) = self.handle.take() {
-            let result = handle.await??;
+            let result = handle.await?;
             return Ok(result);
         } else {
             return Err(Error::DownloadNotRunning);
@@ -179,7 +163,7 @@ impl DownloadManager {
         }
     }
 
-    async fn stop(&mut self, id: Uuid) -> Result<u64> {
+    async fn stop(&mut self, id: Uuid) -> Result<()> {
         log::info!("Stop action requested for download: {}", id);
         if let Some(mut item) = self.items.remove(&id) {
             log::info!("Stopping download {}", id);
@@ -189,7 +173,7 @@ impl DownloadManager {
         }
     }
 
-    async fn complete(&mut self, id: Uuid) -> Result<u64> {
+    async fn complete(&mut self, id: Uuid) -> Result<()> {
         log::info!("Complete action requested for download: {}", id);
         if let Some(mut item) = self.items.remove(&id) {
             log::info!("Running download {} to completion.", id);
@@ -202,13 +186,11 @@ impl DownloadManager {
 
 #[cfg(test)]
 mod test {
-    use crate::util::setup_test_download;
-
     use super::*;
-    use reqwest::Url;
+    use crate::util::{file_size, setup_test_download};
     use std::error::Error;
-    use tempfile::TempDir;
     use test_log::test;
+    use tokio::time;
 
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
@@ -218,10 +200,12 @@ mod test {
     async fn start_download() -> Test<()> {
         let mut manager = DownloadManager::default();
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
+        let download_path = download.file_path.clone();
         let id = manager.add(download)?;
         manager.start(id)?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-        let downloaded_bytes = manager.stop(id).await?;
+        time::sleep(time::Duration::from_secs(1)).await;
+        manager.stop(id).await?;
+        let downloaded_bytes = file_size(&download_path).await;
         assert_ne!(
             downloaded_bytes, 0,
             "Downloaded bytes should be greater than 0"

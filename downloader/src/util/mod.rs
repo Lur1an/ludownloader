@@ -31,6 +31,17 @@ pub fn parse_filename(url: &Url) -> Option<&str> {
     }
 }
 
+pub fn kb(bytes: u64) -> f64 {
+    bytes as f64 / 1024.0
+}
+
+pub fn mb(bytes: u64) -> f64 {
+    bytes as f64 / 1024.0 / 1024.0
+}
+
+pub fn gb(bytes: u64) -> f64 {
+    bytes as f64 / 1024.0 / 1024.0 / 1024.0
+}
 /**
  * Given a HeaderMap checks if the server that sent the headers supports byte ranges
  */
