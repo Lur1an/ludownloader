@@ -13,9 +13,9 @@ use uuid::Uuid;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Error while trying to access download in map: {0}")]
-    DownloadAccess(String),
+    Access(String),
     #[error("Error occurred while downloading: {0}")]
-    DownloadError(#[from] crate::httpdownload::download::Error),
+    HttpDownloadError(#[from] crate::httpdownload::download::Error),
     #[error("JoinError for download: {0}")]
     TokioThreadingError(#[from] tokio::task::JoinError),
     #[error("Download is not running")]
@@ -40,11 +40,29 @@ async fn run_download_locked(
     resume: bool,
 ) -> super::download::Result<u64> {
     let download = download.read().await;
+    let update_ch_cl = update_ch.clone();
     let result = if resume {
         download.resume(rx, update_ch).await
     } else {
         download.start(rx, update_ch).await
     };
+    if let Err(e) = &result {
+        match e {
+            crate::httpdownload::download::Error::Io(_) => todo!(),
+            crate::httpdownload::download::Error::Request(_) => todo!(),
+            crate::httpdownload::download::Error::MissingContentLength(_) => todo!(),
+            crate::httpdownload::download::Error::ChannelDrop(_, _) => todo!(),
+            crate::httpdownload::download::Error::DownloadComplete(_) => todo!(),
+            crate::httpdownload::download::Error::DownloadNotOk(_, _) => todo!(),
+            crate::httpdownload::download::Error::StreamEndedBeforeCompletion(_) => todo!(),
+        }
+    }
+    let _ = update_ch_cl
+        .send(DownloadUpdate {
+            id: download.id,
+            update_type: crate::httpdownload::download::UpdateType::Completed,
+        })
+        .await;
     result
 }
 
@@ -72,10 +90,12 @@ impl DownloaderItem {
 
     async fn stop(&mut self) -> Result<u64> {
         if let Some((handle, tx)) = self.handle.take() {
-            let send_result = tx.send(());
+            let _ = tx.send(());
+            let result = handle.await??;
+            Ok(result)
+        } else {
+            Err(Error::DownloadNotRunning)
         }
-
-        todo!()
     }
 
     async fn complete(&mut self) -> Result<u64> {
@@ -107,7 +127,7 @@ struct DefaultUpdateConsumer {}
 #[async_trait]
 impl UpdateConsumer for DefaultUpdateConsumer {
     async fn consume(&self, update: DownloadUpdate) {
-        log::trace!("Update: {:?}", update);
+        log::info!("Update: {:?}", update);
     }
 }
 
@@ -142,6 +162,7 @@ impl DownloadManager {
     }
 
     fn add(&mut self, download: HttpDownload) -> Result<Uuid> {
+        log::info!("Adding download: {:?}", download);
         let id = download.id;
         let item = DownloaderItem::new(download);
         self.items.insert(id, item);
@@ -151,13 +172,10 @@ impl DownloadManager {
     fn start(&mut self, id: Uuid) -> Result<()> {
         if let Some(item) = self.items.get_mut(&id) {
             let update_ch = self.update_ch.clone();
-            item.run(update_ch, true);
+            item.run(update_ch, false);
             Ok(())
         } else {
-            Err(Error::DownloadAccess(format!(
-                "Download with id {} not found",
-                id
-            )))
+            Err(Error::Access(format!("Download with id {} not found", id)))
         }
     }
 
@@ -167,10 +185,7 @@ impl DownloadManager {
             log::info!("Stopping download {}", id);
             item.stop().await
         } else {
-            Err(Error::DownloadAccess(format!(
-                "Download with id {} not found",
-                id
-            )))
+            Err(Error::Access(format!("Download with id {} not found", id)))
         }
     }
 
@@ -180,35 +195,29 @@ impl DownloadManager {
             log::info!("Running download {} to completion.", id);
             item.complete().await
         } else {
-            Err(Error::DownloadAccess(format!(
-                "Download with id {} not found",
-                id
-            )))
+            Err(Error::Access(format!("Download with id {} not found", id)))
         }
     }
 }
 
 #[cfg(test)]
 mod test {
+    use crate::util::setup_test_download;
+
     use super::*;
     use reqwest::Url;
     use std::error::Error;
     use tempfile::TempDir;
+    use test_log::test;
 
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn start_download() -> Test<()> {
         let mut manager = DownloadManager::default();
-        let tmp_dir = TempDir::new()?;
-        let tmp_path = tmp_dir.path();
-        let client = Client::new();
-        let file_path = tmp_path.join("deez.nuts");
-        let download = HttpDownload::new(Url::parse(TEST_DOWNLOAD_URL)?, file_path, client, None)
-            .await
-            .expect("Failed creating httpdownload");
+        let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let id = manager.add(download)?;
         manager.start(id)?;
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;

@@ -50,6 +50,7 @@ pub async fn setup_test_download(url_str: &str) -> Result<(HttpDownload, TempDir
     let download = HttpDownload::new(url, file_path, client, None).await?;
     Ok((download, tmp_dir))
 }
+
 #[cfg(test)]
 mod test {
     use super::*;

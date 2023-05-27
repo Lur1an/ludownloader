@@ -23,21 +23,29 @@ pub enum Error {
     Request(#[from] reqwest::Error),
     #[error("Content length not provided for url: '{0}'")]
     MissingContentLength(Url),
-    #[error("Failed sending stop signal to download: '{0}'")]
-    StopFailure(Url),
     #[error("Prematurely dropped channel for download with url: '{0}', downloaded bytes before drop: '{1}'")]
     ChannelDrop(u64, Url),
     #[error("Download was already finished, downloaded bytes: '{0}'")]
     DownloadComplete(u64),
-    #[error("Download req did not yield 200, instead: '{0}'")]
-    DownloadNotOk(reqwest::StatusCode),
+    #[error("Download req did not yield 200, instead: '{0}', body: '{1}'")]
+    DownloadNotOk(reqwest::StatusCode, String),
+    #[error("Download ended before completion, downloaded bytes: '{0}'")]
+    StreamEndedBeforeCompletion(u64)
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DownloadUpdate {
     pub id: uuid::Uuid,
+    pub update_type: UpdateType,
+}
+
+#[derive(Debug)]
+pub enum UpdateType {
+    Completed,
+    Progress(u64),
+    Error(Error)
 }
 
 #[derive(Debug, Clone)]
@@ -140,6 +148,12 @@ impl HttpDownload {
             let item = chunk?;
             let bytes_written = file_handler.write(&item).await? as u64;
             downloaded_bytes += bytes_written;
+            let _ = update_ch.try_send(
+                DownloadUpdate { 
+                    id: self.id,
+                    update_type: UpdateType::Progress(downloaded_bytes)
+                }
+            );
             match stop_ch.try_recv() {
                 Ok(_) => {
                     log::info!("Download stop signal received for: {}", self.url);
@@ -153,8 +167,16 @@ impl HttpDownload {
                 }
             }
         }
+        if downloaded_bytes != self.content_length {
+            log::error!(
+                "Download ended before completion, downloaded bytes: {}, content length: {}",
+                downloaded_bytes,
+                self.content_length
+            );
+            return Err(Error::StreamEndedBeforeCompletion(downloaded_bytes));
+        }
         log::info!(
-            "Completed download: {}, bytes: {}",
+            "Download finished: {}, bytes: {}",
             self.url,
             downloaded_bytes
         );
@@ -178,7 +200,10 @@ impl HttpDownload {
         let status = resp.status();
         match status {
             reqwest::StatusCode::OK => {}
-            _ => return Err(Error::DownloadNotOk(status)),
+            _ => {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(Error::DownloadNotOk(status, body))
+            },
         };
 
         match resp.content_length() {
@@ -201,9 +226,8 @@ mod test {
     use std::sync::Arc;
 
     use pretty_assertions::assert_eq;
-    use tempfile::TempDir;
 
-    use crate::util::parse_filename;
+    use crate::util::{parse_filename, setup_test_download};
 
     use super::*;
 
@@ -211,15 +235,6 @@ mod test {
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
 
-    async fn setup_test_download(url_str: &str) -> Test<(HttpDownload, TempDir)> {
-        let tmp_dir = TempDir::new()?;
-        let tmp_path = tmp_dir.path();
-        let url = Url::parse(url_str)?;
-        let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
-        let client = Client::new();
-        let download = HttpDownload::new(url, file_path, client, None).await?;
-        Ok((download, tmp_dir))
-    }
 
     #[tokio::test]
     async fn concurrent_download_test() -> Test<()> {
