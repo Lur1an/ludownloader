@@ -5,6 +5,7 @@ use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use async_trait::async_trait;
 use reqwest::Client;
 use thiserror::Error;
+use tokio::sync::RwLockWriteGuard;
 use tokio::{
     sync::{mpsc, oneshot, RwLock},
     task::JoinHandle,
@@ -21,6 +22,8 @@ pub enum Error {
     TokioThreadingError(#[from] tokio::task::JoinError),
     #[error("Download is not running")]
     DownloadNotRunning,
+    #[error("Couldn't acquire Lock for Download: {0}")]
+    LockError(#[from] tokio::sync::TryLockError),
 }
 
 type Result<T> = std::result::Result<T, Error>;
@@ -48,6 +51,11 @@ impl DownloaderItem {
         let download_arc = self.download.clone();
         let thread_handle = tokio::spawn(async move {
             let download = download_arc.read().await;
+            log::info!(
+                "Acquired read lock for download: {}, resume: {}",
+                download.id,
+                resume
+            );
             let update_ch_cl = update_ch.clone();
             let result = if resume {
                 download.resume(rx, update_ch).await
@@ -55,6 +63,11 @@ impl DownloaderItem {
                 download.start(rx, update_ch).await
             };
             if let Err(e) = result {
+                log::error!(
+                    "Error encountered while downloading {}, Error: {}",
+                    download.id,
+                    e
+                );
                 let _ = update_ch_cl
                     .send(DownloadUpdate {
                         id: download.id,
@@ -93,7 +106,7 @@ impl DownloaderItem {
 }
 
 #[derive(Debug)]
-struct DownloadManager {
+pub struct DownloadManager {
     update_ch: mpsc::Sender<DownloadUpdate>,
     client: Client,
     consumer_thread: JoinHandle<()>,
@@ -101,7 +114,7 @@ struct DownloadManager {
 }
 
 #[async_trait]
-trait UpdateConsumer {
+pub trait UpdateConsumer {
     async fn consume(&self, update: DownloadUpdate);
 }
 
@@ -145,7 +158,7 @@ impl DownloadManager {
         }
     }
 
-    fn add(&mut self, download: HttpDownload) -> Result<Uuid> {
+    pub fn add(&mut self, download: HttpDownload) -> Result<Uuid> {
         log::info!("Adding download: {:?}", download);
         let id = download.id;
         let item = DownloaderItem::new(download);
@@ -153,7 +166,16 @@ impl DownloadManager {
         Ok(id)
     }
 
-    fn start(&mut self, id: Uuid) -> Result<()> {
+    pub async fn edit(&mut self, id: Uuid) -> Result<RwLockWriteGuard<HttpDownload>> {
+        if let Some(item) = self.items.get_mut(&id) {
+            let guard = item.download.try_write()?;
+            Ok(guard)
+        } else {
+            Err(Error::Access(format!("Download with id {} not found", id)))
+        }
+    }
+
+    pub fn start(&mut self, id: Uuid) -> Result<()> {
         if let Some(item) = self.items.get_mut(&id) {
             let update_ch = self.update_ch.clone();
             item.run(update_ch, false);
@@ -163,7 +185,7 @@ impl DownloadManager {
         }
     }
 
-    async fn stop(&mut self, id: Uuid) -> Result<()> {
+    pub async fn stop(&mut self, id: Uuid) -> Result<()> {
         log::info!("Stop action requested for download: {}", id);
         if let Some(mut item) = self.items.remove(&id) {
             log::info!("Stopping download {}", id);
@@ -173,7 +195,7 @@ impl DownloadManager {
         }
     }
 
-    async fn complete(&mut self, id: Uuid) -> Result<()> {
+    pub async fn complete(&mut self, id: Uuid) -> Result<()> {
         log::info!("Complete action requested for download: {}", id);
         if let Some(mut item) = self.items.remove(&id) {
             log::info!("Running download {} to completion.", id);

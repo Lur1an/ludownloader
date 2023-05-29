@@ -72,7 +72,7 @@ impl HttpDownload {
             .send()
             .await?;
         let file_handler = File::create(&self.file_path).await?;
-        self.progress(resp, file_handler, stop_ch, update_ch).await
+        self.progress(resp, file_handler, stop_ch, update_ch, 0).await
     }
 
 
@@ -110,7 +110,7 @@ impl HttpDownload {
             .header(RANGE, format!("bytes={}-", bytes_on_disk))
             .send()
             .await?;
-        Ok(bytes_on_disk + self.progress(resp, file_handler, stop_ch, update_ch).await?)
+        Ok(self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk).await?)
     }
 
     pub async fn new(
@@ -141,8 +141,8 @@ impl HttpDownload {
         mut file_handler: File,
         mut stop_ch: oneshot::Receiver<()>,
         update_ch: mpsc::Sender<DownloadUpdate>,
+        mut downloaded_bytes: u64,
     ) -> Result<u64> {
-        let mut downloaded_bytes = 0u64;
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let item = chunk?;
@@ -224,6 +224,7 @@ mod test {
     use std::error::Error;
     use std::iter::zip;
     use std::sync::Arc;
+    use test_log::test;
 
     use pretty_assertions::assert_eq;
 
@@ -236,7 +237,7 @@ mod test {
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
 
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn concurrent_download_test() -> Test<()> {
         let mut handles = Vec::new();
         let mut downloads = Vec::new();
@@ -270,7 +271,7 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn server_data_is_requested_on_create_test() -> Test<()> {
         // given
         let url_str = TEST_DOWNLOAD_URL;
@@ -286,7 +287,7 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn default_download_test() -> Test<()> {
         // given
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
@@ -308,7 +309,7 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn download_with_custom_chunksize_test() -> Test<()> {
         // given
         let mut config = HttpDownloadConfig::default();
@@ -334,7 +335,7 @@ mod test {
         Ok(())
     }
 
-    #[tokio::test]
+    #[test(tokio::test)]
     async fn download_can_be_stopped_and_resumed_test() -> Test<()> {
         // setup
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
