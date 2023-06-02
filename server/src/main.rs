@@ -1,22 +1,12 @@
-mod app;
 mod data;
 mod routes;
 
-use axum::{routing::get, Router};
-
-use data::Foo;
-use downloader::httpdownload;
+use routes::routes;
 
 #[tokio::main]
 async fn main() {
     // build our application with a single route
-    let app = Router::new().route("/", get(|| async { "Hello, World!" }));
-    let manager = httpdownload::manager::DownloadManager::default();
-
-    let foo = Foo {
-        bar: "Hello, World!".to_string(),
-    };
-
+    let app = routes();
     // run it with hyper on localhost:3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
         .serve(app.into_make_service())
@@ -27,6 +17,7 @@ async fn main() {
 #[cfg(test)]
 mod test {
     use super::*;
+    use data::Foo;
     use test_log::test;
     #[test]
     fn encode_decode_foo() {

@@ -97,8 +97,7 @@ impl DownloaderItem {
 
     async fn complete(&mut self) -> Result<()> {
         if let Some((handle, _tx)) = self.handle.take() {
-            let result = handle.await?;
-            return Ok(result);
+            Ok(handle.await?)
         } else {
             return Err(Error::DownloadNotRunning);
         }

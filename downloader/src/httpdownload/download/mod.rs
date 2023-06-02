@@ -161,15 +161,15 @@ impl HttpDownload {
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Closed) => {
-                    log::error!("Download stop signal channel closed for: {}", self.url);
-                    log::info!("Stopping download because of error: {}", self.url);
+                    log::error!("Download stop signal channel closed for: {}, this shouldn't happen!", self.url);
+                    log::info!("Stopping download because of channel error: {}", self.url);
                     return Err(Error::ChannelDrop(downloaded_bytes, self.url.clone()));
                 }
             }
         }
         if downloaded_bytes < self.content_length {
             log::error!(
-                "Download ended before completion, downloaded bytes: {}, content length: {}",
+                "Download stream ended before completion, downloaded bytes: {}, content length: {}",
                 downloaded_bytes,
                 self.content_length
             );
