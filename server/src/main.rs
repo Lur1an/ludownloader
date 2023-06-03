@@ -1,12 +1,17 @@
+mod app;
 mod data;
 mod routes;
+mod settings;
 
-use routes::routes;
+use routes::{routes, ApplicationState};
 
 #[tokio::main]
 async fn main() {
+    // init state
+    let settings = crate::settings::SettingManager::load(None).await;
+    let state = ApplicationState { settings };
     // build our application with a single route
-    let app = routes();
+    let app = routes(state);
     // run it with hyper on localhost:3000
     axum::Server::bind(&"0.0.0.0:3000".parse().unwrap())
         .serve(app.into_make_service())

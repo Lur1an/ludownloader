@@ -5,11 +5,10 @@ use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot};
 
 use crate::util::{file_size, supports_byte_ranges, mb};
 
@@ -56,7 +55,7 @@ pub struct HttpDownload {
     pub config: HttpDownloadConfig,
     pub content_length: u64,
     pub supports_byte_ranges: bool,
-    client: Client,
+    pub client: Client,
 }
 
 impl HttpDownload {

@@ -1,16 +1,18 @@
-use std::{collections::HashMap, sync::Arc};
+mod item;
 
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use async_trait::async_trait;
-use reqwest::Client;
+use std::collections::HashMap;
+use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLockWriteGuard;
-use tokio::{
-    sync::{mpsc, oneshot, RwLock},
-    task::JoinHandle,
-};
+use tokio::sync::{RwLock, RwLockWriteGuard};
+use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
+
+use self::item::DownloaderItem;
+
+pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -26,88 +28,13 @@ pub enum Error {
     LockError(#[from] tokio::sync::TryLockError),
 }
 
-type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug)]
-struct DownloaderItem {
-    download: Arc<RwLock<HttpDownload>>,
-    handle: Option<(JoinHandle<()>, oneshot::Sender<()>)>,
-}
-
-impl DownloaderItem {
-    fn new(download: HttpDownload) -> Self {
-        DownloaderItem {
-            download: Arc::new(RwLock::new(download)),
-            handle: None,
-        }
-    }
-
-    fn is_running(&self) -> bool {
-        self.handle.is_some()
-    }
-
-    fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
-        let (tx, rx) = oneshot::channel();
-        let download_arc = self.download.clone();
-        let thread_handle = tokio::spawn(async move {
-            let download = download_arc.read().await;
-            log::info!(
-                "Acquired read lock for download: {}, resume: {}",
-                download.id,
-                resume
-            );
-            let update_ch_cl = update_ch.clone();
-            let result = if resume {
-                download.resume(rx, update_ch).await
-            } else {
-                download.start(rx, update_ch).await
-            };
-            if let Err(e) = result {
-                log::error!(
-                    "Error encountered while downloading {}, Error: {}",
-                    download.id,
-                    e
-                );
-                let _ = update_ch_cl
-                    .send(DownloadUpdate {
-                        id: download.id,
-                        update_type: download::UpdateType::Error(e),
-                    })
-                    .await;
-            }
-            let _ = update_ch_cl
-                .send(DownloadUpdate {
-                    id: download.id,
-                    update_type: download::UpdateType::Stop,
-                })
-                .await;
-        });
-        self.handle = Some((thread_handle, tx));
-    }
-
-    async fn stop(&mut self) -> Result<()> {
-        if let Some((handle, tx)) = self.handle.take() {
-            let _ = tx.send(());
-            let result = handle.await?;
-            Ok(result)
-        } else {
-            Err(Error::DownloadNotRunning)
-        }
-    }
-
-    async fn complete(&mut self) -> Result<()> {
-        if let Some((handle, _tx)) = self.handle.take() {
-            Ok(handle.await?)
-        } else {
-            return Err(Error::DownloadNotRunning);
-        }
-    }
+struct DownloadManager {
+    inner: Arc<RwLock<Inner>>,
 }
 
 #[derive(Debug)]
-pub struct DownloadManager {
+pub struct Inner {
     update_ch: mpsc::Sender<DownloadUpdate>,
-    client: Client,
     consumer_thread: JoinHandle<()>,
     items: HashMap<Uuid, DownloaderItem>,
 }
@@ -118,7 +45,7 @@ pub trait UpdateConsumer {
 }
 
 #[derive(Default)]
-struct DefaultUpdateConsumer {}
+struct DefaultUpdateConsumer;
 
 #[async_trait]
 impl UpdateConsumer for DefaultUpdateConsumer {
@@ -127,19 +54,15 @@ impl UpdateConsumer for DefaultUpdateConsumer {
     }
 }
 
-impl Default for DownloadManager {
+impl Default for Inner {
     fn default() -> Self {
         let updater = DefaultUpdateConsumer::default();
-        let client = Client::new();
-        DownloadManager::new(updater, client)
+        Inner::new(updater)
     }
 }
 
-impl DownloadManager {
-    pub fn new(
-        update_consumer: impl UpdateConsumer + Send + Sync + 'static,
-        client: Client,
-    ) -> Self {
+impl Inner {
+    pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         let (update_sender, mut update_recv) = mpsc::channel::<DownloadUpdate>(1000);
         log::info!("Spawning update consumer task");
         let consumer_thread = tokio::task::spawn(async move {
@@ -149,9 +72,8 @@ impl DownloadManager {
             log::info!("Update channel closed, last update_sender has been dropped");
         });
 
-        DownloadManager {
+        Inner {
             consumer_thread,
-            client,
             update_ch: update_sender,
             items: HashMap::new(),
         }
