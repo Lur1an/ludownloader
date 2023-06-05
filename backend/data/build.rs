@@ -4,7 +4,7 @@ fn main() -> Result<()> {
     //     .expect("Failed to read proto directory")
     //     .map(|e| e.expect("Failed to read proto file").path())
     //     .collect::<Vec<_>>();
-    let protos = vec!["../proto/httpdownload.proto"];
-    prost_build::compile_protos(&protos, &["../proto/"])?;
+    let protos = vec!["../../proto/httpdownload.proto"];
+    prost_build::compile_protos(&protos, &["../../proto/"])?;
     Ok(())
 }

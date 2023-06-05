@@ -1,5 +1,4 @@
 mod app;
-mod data;
 mod routes;
 mod settings;
 
@@ -23,7 +22,7 @@ async fn main() {
 #[cfg(test)]
 mod test {
     use super::*;
-    use data::DownloadMetadata;
+    use data::types::DownloadMetadata;
     use test_log::test;
     use uuid::Uuid;
 
