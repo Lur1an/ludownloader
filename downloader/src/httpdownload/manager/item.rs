@@ -55,7 +55,7 @@ impl DownloaderItem {
             let _ = update_ch_cl
                 .send(DownloadUpdate {
                     id: download.id,
-                    update_type: download::UpdateType::Stop,
+                    update_type: download::UpdateType::Complete,
                 })
                 .await;
         });

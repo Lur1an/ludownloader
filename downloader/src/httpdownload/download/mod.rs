@@ -5,6 +5,7 @@ use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
@@ -42,8 +43,12 @@ pub struct DownloadUpdate {
 
 #[derive(Debug)]
 pub enum UpdateType {
-    Stop,
-    Progress(u64),
+    Complete,
+    Paused,
+    Running {
+        bytes_downloaded: u64,
+        bytes_per_second: u64,
+    },
     Error(Error)
 }
 
@@ -150,7 +155,10 @@ impl HttpDownload {
             let _ = update_ch.try_send(
                 DownloadUpdate { 
                     id: self.id,
-                    update_type: UpdateType::Progress(downloaded_bytes)
+                    update_type: UpdateType::Running {
+                        bytes_downloaded: downloaded_bytes,
+                        bytes_per_second: 0u64, // TODO: measure download speed
+                    }
                 }
             );
             match stop_ch.try_recv() {

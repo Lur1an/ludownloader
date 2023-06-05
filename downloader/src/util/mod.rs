@@ -47,9 +47,10 @@ pub fn gb(bytes: u64) -> f64 {
  */
 pub fn supports_byte_ranges(headers: &HeaderMap) -> bool {
     if let Some(val) = headers.get(header::ACCEPT_RANGES) {
-        return val == "bytes";
+        val == "bytes"
+    } else {
+        false
     }
-    return false;
 }
 
 pub async fn setup_test_download(url_str: &str) -> Result<(HttpDownload, TempDir), Box<dyn Error>> {

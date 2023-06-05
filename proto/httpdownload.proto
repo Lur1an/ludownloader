@@ -1,0 +1,11 @@
+syntax = "proto3";
+package data;
+
+message DownloadMetadata {
+    string url = 1;
+    string file_path = 2;
+    uint64 content_length = 3;
+    bytes uuid = 4;
+}
+
+
