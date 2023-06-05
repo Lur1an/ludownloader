@@ -1,11 +1,32 @@
 syntax = "proto3";
 package data;
 
+
+message DownloadRunning {
+    uint64 bytes_downloaded = 1;
+    uint64 bytes_per_second = 2;
+}
+
+message DownloadPaused {
+    uint64 bytes_downloaded = 1;
+}
+
 message DownloadMetadata {
     string url = 1;
     string file_path = 2;
     uint64 content_length = 3;
     bytes uuid = 4;
 }
+
+message DownloadState {
+    DownloadMetadata metadata = 1;
+    oneof state {
+        DownloadRunning running = 2;
+        DownloadPaused paused = 3;
+        string error = 4;
+        bool complete = 5;
+    }
+}
+
 
 

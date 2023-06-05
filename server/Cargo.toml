@@ -20,6 +20,7 @@ test-log = "0.2.11"
 serde_yaml = "0.9.21"
 uuid = { version = "1.3.3", features = ["v4", "fast-rng", "macro-diagnostics"] }
 dirs = "5.0.1"
+async-trait = "0.1.68"
 
 [build-dependencies]
 prost-build = { version =  "0.11.9" }

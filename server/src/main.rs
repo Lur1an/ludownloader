@@ -9,7 +9,8 @@ use routes::{routes, ApplicationState};
 async fn main() {
     // init state
     let settings = crate::settings::SettingManager::load(None).await;
-    let state = ApplicationState { settings };
+    todo!();
+    let state = ApplicationState::new();
     // build our application with a single route
     let app = routes(state);
     // run it with hyper on localhost:3000
@@ -25,8 +26,9 @@ mod test {
     use data::DownloadMetadata;
     use test_log::test;
     use uuid::Uuid;
+
     #[test]
-    fn encode_decode_foo() {
+    fn encode_decode_download_metadata() {
         let download_metadata = DownloadMetadata {
             url: "https://www.google.com".to_string(),
             file_path: "/tmp/foo".to_string(),

@@ -5,7 +5,6 @@ use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;

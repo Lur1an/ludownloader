@@ -39,25 +39,34 @@ impl DownloaderItem {
             } else {
                 download.start(rx, update_ch).await
             };
-            if let Err(e) = result {
-                log::error!(
-                    "Error encountered while downloading {}, Error: {}",
-                    download.id,
-                    e
-                );
-                let _ = update_ch_cl
-                    .send(DownloadUpdate {
-                        id: download.id,
-                        update_type: download::UpdateType::Error(e),
-                    })
-                    .await;
+            match result {
+                Ok(downloaded_bytes) => {
+                    let update_type = if downloaded_bytes == download.content_length {
+                        download::UpdateType::Complete
+                    } else {
+                        download::UpdateType::Paused
+                    };
+                    let _ = update_ch_cl
+                        .send(DownloadUpdate {
+                            id: download.id,
+                            update_type,
+                        })
+                        .await;
+                }
+                Err(e) => {
+                    log::error!(
+                        "Error encountered while downloading {}, Error: {}",
+                        download.id,
+                        e
+                    );
+                    let _ = update_ch_cl
+                        .send(DownloadUpdate {
+                            id: download.id,
+                            update_type: download::UpdateType::Error(e),
+                        })
+                        .await;
+                }
             }
-            let _ = update_ch_cl
-                .send(DownloadUpdate {
-                    id: download.id,
-                    update_type: download::UpdateType::Complete,
-                })
-                .await;
         });
         self.handle = Some((thread_handle, tx));
     }

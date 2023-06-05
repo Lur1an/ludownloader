@@ -28,6 +28,8 @@ pub enum Error {
 }
 
 #[async_trait]
+/// Trait for a struct that can handle updates from multiple HttpDownloads
+/// The struct that implements this should use a mutex internally to allow for concurrent access.
 pub trait UpdateConsumer {
     async fn consume(&self, update: DownloadUpdate);
 }
