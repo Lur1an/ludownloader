@@ -24,18 +24,13 @@ jobs:
           run: cargo build --verbose
   test-rust:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        env:
-          RUST_LOG: info
-
     steps:
       - uses: actions/checkout@v3
     
       - name: Test downloader
         working-directory: ./backend/downloader
-        run: cargo test --verbose -- --nocapture
+        run: RUST_LOG=info cargo test --verbose -- --nocapture
 
       - name: Test server
         working-directory: ./backen/server
-        run: cargo test --verbose -- --nocapture
+        run: RUST_LOG=info cargo test --verbose -- --nocapture
