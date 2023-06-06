@@ -24,7 +24,7 @@ jobs:
           run: cargo build --verbose
 
         - name: Build server
-          working-directory: ./backen/server
+          working-directory: ./backend/server
           run: cargo build --verbose
   test-rust:
     needs: build-rust
@@ -41,5 +41,5 @@ jobs:
         run: RUST_LOG=info cargo test --verbose -- --nocapture
 
       - name: Test server
-        working-directory: ./backen/server
+        working-directory: ./backend/server
         run: RUST_LOG=info cargo test --verbose -- --nocapture
