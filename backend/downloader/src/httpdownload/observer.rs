@@ -1,9 +1,25 @@
-use tokio::sync::mpsc::Sender;
+use std::sync::Arc;
+
+use tokio::sync::{
+    mpsc::{Receiver, Sender},
+    RwLock,
+};
 
 use super::{
     download::{self, DownloadUpdate},
     manager::UpdateConsumer,
 };
+
+struct Inner {
+    rx: Receiver<Vec<DownloadUpdate>>,
+}
+
+#[derive(Clone)]
+pub struct DownloadObserver {
+    inner: Arc<RwLock<Inner>>,
+}
+
+impl DownloadObserver {}
 
 pub struct BufferedDownloadConsumer {
     tx: Sender<Vec<DownloadUpdate>>,
@@ -46,4 +62,9 @@ impl BufferedDownloadConsumer {
             }
         });
     }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
 }

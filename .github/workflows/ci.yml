@@ -10,14 +10,32 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  build-rust:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+        - uses: actions/checkout@v3
+        
+        - name: Build downloader
+          working-directory: ./backend/downloader
+          run: cargo build --verbose
+
+        - name: Build server
+          working-directory: ./backen/server
+          run: cargo build --verbose
+  test-rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        env:
+          RUST_LOG: info
+
+    steps:
+      - uses: actions/checkout@v3
     
-    - name: Build Downloader
-      working-directory: ./downloader
-      run: cargo build --verbose
-    - name: Run tests
-      working-directory: ./downloader
-      run: cargo test --verbose
+      - name: Test downloader
+        working-directory: ./backend/downloader
+        run: cargo test --verbose -- --nocapture
+
+      - name: Test server
+        working-directory: ./backen/server
+        run: cargo test --verbose -- --nocapture
