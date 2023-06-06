@@ -11,9 +11,8 @@ use super::{Error, Result, UpdateConsumer};
 #[derive(Default)]
 struct DefaultUpdateConsumer;
 
-#[async_trait]
 impl UpdateConsumer for DefaultUpdateConsumer {
-    async fn consume(&self, update: DownloadUpdate) {
+    fn consume(&mut self, update: DownloadUpdate) {
         log::info!("Update: {:?}", update);
     }
 }
@@ -32,14 +31,17 @@ impl Default for Inner {
 }
 
 impl Inner {
-    pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
+    pub fn new(mut update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         let (update_sender, mut update_recv) = mpsc::channel::<DownloadUpdate>(1000);
         log::info!("Spawning update consumer task");
         let consumer_thread = tokio::task::spawn(async move {
             while let Some(update) = update_recv.recv().await {
-                update_consumer.consume(update).await;
+                update_consumer.consume(update);
             }
-            log::info!("Update channel closed, last update_sender has been dropped");
+            log::error!("Update channel closed, last update_sender has been dropped");
+            log::error!(
+                "This thread should live as long as the program, so this should never happen."
+            );
         });
 
         Inner {
