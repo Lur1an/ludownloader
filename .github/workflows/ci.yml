@@ -23,6 +23,7 @@ jobs:
           working-directory: ./backen/server
           run: cargo build --verbose
   test-rust:
+    needs: build-rust
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
