@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use super::item::DownloaderItem;
 use super::{Error, Result, UpdateConsumer};
+
 #[derive(Default)]
 struct DefaultUpdateConsumer;
 
@@ -16,6 +17,13 @@ impl UpdateConsumer for DefaultUpdateConsumer {
         log::info!("Update: {:?}", update);
     }
 }
+
+impl UpdateConsumer for () {
+    fn consume(&mut self, update: DownloadUpdate) {
+        todo!()
+    }
+}
+
 #[derive(Debug)]
 pub struct Inner {
     update_ch: mpsc::Sender<DownloadUpdate>,

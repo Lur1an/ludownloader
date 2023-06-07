@@ -52,6 +52,7 @@ impl Default for DownloadManager {
 }
 
 impl DownloadManager {
+    /// The update_consumer is placed in a separate thread and will receive all updates from all downloads.
     pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         Self {
             inner: Arc::new(RwLock::new(Inner::new(update_consumer))),
@@ -81,14 +82,14 @@ mod test {
     use crate::util::{file_size, setup_test_download};
     use std::error::Error;
     use test_log::test;
-    use tokio::time;
+    use tokio::{sync::mpsc::Sender, time};
 
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
 
     #[test(tokio::test)]
-    async fn start_download() -> Test<()> {
+    async fn start_and_stop_download() -> Test<()> {
         let manager = DownloadManager::default();
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let download_path = download.file_path.clone();

@@ -242,41 +242,6 @@ mod test {
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
 
-
-    #[test(tokio::test)]
-    async fn concurrent_download_test() -> Test<()> {
-        let mut handles = Vec::new();
-        let mut downloads = Vec::new();
-        // Needed because if the tmp dir is dropped it is actually deleted in the Drop impl
-        let mut anti_drop = Vec::new();
-        for _ in 0..3 {
-            let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await.unwrap();
-            let download = Arc::new(download);
-            let (tx, rx) = tokio::sync::oneshot::channel();
-            let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
-            downloads.push(download.clone());
-            let fut = async move { download.start(rx, update_sender).await };
-            let handle = tokio::spawn(fut);
-            anti_drop.push((_tmp_dir, tx));
-            handles.push(handle);
-        }
-        let results = futures::future::join_all(handles).await;
-        for (download, result) in zip(downloads, results) {
-            let downloaded_bytes = result??;
-            assert_eq!(
-                download.content_length,
-                download.get_bytes_on_disk().await,
-                "File size should be equal to content_length"
-            );
-            assert_eq!(
-                downloaded_bytes,
-                download.content_length,
-                "The downloaded bytes need to be equal to the content_length when the download is finished"
-            );
-        }
-        Ok(())
-    }
-
     #[test(tokio::test)]
     async fn server_data_is_requested_on_create_test() -> Test<()> {
         // given

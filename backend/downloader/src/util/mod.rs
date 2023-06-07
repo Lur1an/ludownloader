@@ -16,7 +16,7 @@ pub async fn file_size(fpath: &Path) -> u64 {
         _ => 0,
     }
 }
-
+pub type TestResult<T> = std::result::Result<T, Box<dyn Error>>;
 /**
  * Parses the filename from the download URL
  * Returns None if there is no filename or if url.path_segments() fails
