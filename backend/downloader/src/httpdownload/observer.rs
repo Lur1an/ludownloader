@@ -1,102 +1,53 @@
 use std::{collections::HashMap, sync::Arc};
 
-use data::types::DownloadState;
+use data::types::{download_state::State, DownloadState};
 use tokio::sync::{
     mpsc::{Receiver, Sender},
-    RwLock,
+    Mutex, RwLock,
 };
 use uuid::Uuid;
 
 use super::{
-    download::{self, DownloadUpdate},
+    download::{self, DownloadUpdate, UpdateType},
     manager::UpdateConsumer,
+    DownloadSubscriber, Subscribers,
 };
 
-struct Inner {
-    cache: HashMap<Uuid, DownloadState>,
+/// This struct is responsible for keeping the state of all running downloads
+pub struct DownloadObserver {}
+
+/// This struct consumes DownloadUpdate and updates an internal state
+/// Depending on the update type it will immediately notify subscribers of the event.
+/// Also it should periodically send the DownloadState to all subscribers.
+pub struct SendingUpdateConsumer {
+    pub subscribers: Subscribers,
+    cache: HashMap<Uuid, State>,
 }
 
-impl Inner {
+impl SendingUpdateConsumer {
     pub fn new() -> Self {
-        let inner = Self {
+        Self {
+            subscribers: Arc::new(Mutex::new(Vec::new())),
             cache: HashMap::new(),
-        };
-        inner
+        }
+    }
+    pub async fn add_subscriber(&self, subscriber: Box<dyn DownloadSubscriber + Send>) {
+        let mut guard = self.subscribers.lock().await;
+        guard.push(subscriber);
     }
 }
 
-#[derive(Clone)]
-/// This struct contains the state of all managed Downloads
-/// DownloadState instances in the observer should match 1:1 with HttpDownload instances in the
-/// Manager. The Observer wraps the inner state in an Arc<RwLock> for thread-safe access
-/// The inner lock gets acquired by a background thread everytime updates to downloads are flushed
-pub struct DownloadObserver {
-    inner: Arc<RwLock<Inner>>,
-    tx: Sender<Vec<DownloadUpdate>>,
-}
-
-impl DownloadObserver {
-    pub fn new() -> Self {
-        let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-        let inner = Arc::new(RwLock::new(Inner::new()));
-        let inner_clone = inner.clone();
-        tokio::task::spawn(async move {
-            while let Some(update) = rx.recv().await {
-                let mut guard = inner_clone.write().await;
-                todo!()
-            }
-        });
-        Self { inner, tx }
-    }
-    /// Use this channel to send buffered Vec<DownloadUpdate> to the observer
-    /// The observer will himself handle the lock of the Inner struct to update state in a
-    /// thread-safe manner
-    pub fn get_channel(&self) -> Sender<Vec<DownloadUpdate>> {
-        self.tx.clone()
-    }
-}
-
-pub struct BufferedDownloadConsumer {
-    tx: Sender<Vec<DownloadUpdate>>,
-    buffer: Vec<DownloadUpdate>,
-}
-
-impl BufferedDownloadConsumer {
-    pub fn new(buffer_size: usize, tx: Sender<Vec<DownloadUpdate>>) -> Self {
-        let buffer = Vec::with_capacity(buffer_size);
-        Self { tx, buffer }
-    }
-}
-
-impl UpdateConsumer for BufferedDownloadConsumer {
+impl UpdateConsumer for SendingUpdateConsumer {
     fn consume(&mut self, update: DownloadUpdate) {
-        let is_running = matches!(update.update_type, download::UpdateType::Running { .. });
-        if self.buffer.capacity() > self.buffer.len() {
-            self.buffer.push(update);
-        } else {
-            self.flush();
-            self.buffer.push(update);
+        match update.update_type {
+            UpdateType::Complete => todo!(),
+            UpdateType::Paused => todo!(),
+            UpdateType::Running {
+                bytes_downloaded,
+                bytes_per_second,
+            } => {}
+            UpdateType::Error(_) => todo!(),
         }
-        if !is_running {
-            self.flush();
-        }
-    }
-}
-
-impl BufferedDownloadConsumer {
-    fn flush(&mut self) {
-        let buffer_size = self.buffer.capacity();
-        let new_buffer: Vec<DownloadUpdate> = Vec::with_capacity(buffer_size);
-        let buffered_values = std::mem::replace(&mut self.buffer, new_buffer);
-        let ch = self.tx.clone();
-        tokio::spawn(async move {
-            match ch.send(buffered_values).await {
-                Err(e) => {
-                    log::error!("Failed sending buffered updates to observer: {}", e);
-                }
-                Ok(_) => log::info!("Sent buffered updates to observer"),
-            }
-        });
     }
 }
 

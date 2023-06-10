@@ -51,6 +51,8 @@ pub enum UpdateType {
     Error(Error)
 }
 
+const HALF_SECOND: std::time::Duration = std::time::Duration::from_millis(500);
+
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
     pub url: Url,
@@ -147,19 +149,27 @@ impl HttpDownload {
         mut downloaded_bytes: u64,
     ) -> Result<u64> {
         let mut stream = resp.bytes_stream();
+        let mut last_update = std::time::Instant::now();
+        let mut last_bytes_downloaded = 0u64;
         while let Some(chunk) = stream.next().await {
             let item = chunk?;
             let bytes_written = file_handler.write(&item).await? as u64;
             downloaded_bytes += bytes_written;
-            let _ = update_ch.try_send(
-                DownloadUpdate { 
-                    id: self.id,
-                    update_type: UpdateType::Running {
-                        bytes_downloaded: downloaded_bytes,
-                        bytes_per_second: 0u64, // TODO: measure download speed
+            last_bytes_downloaded += bytes_written;
+            let elapsed = last_update.elapsed();
+            if elapsed > HALF_SECOND {
+                let _ = update_ch.try_send(
+                    DownloadUpdate {
+                        id: self.id,
+                        update_type: UpdateType::Running {
+                            bytes_downloaded: downloaded_bytes,
+                            bytes_per_second: last_bytes_downloaded / last_update.elapsed().as_millis() as u64 * 1000,
+                        },
                     }
-                }
-            );
+                );
+                last_update = std::time::Instant::now();
+                last_bytes_downloaded = 0u64;
+            }
             match stop_ch.try_recv() {
                 Ok(_) => {
                     log::info!("Download stop signal received for: {}", self.url);

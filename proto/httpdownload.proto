@@ -28,5 +28,9 @@ message DownloadState {
     }
 }
 
+message DownloadStateUpdate {
+    repeated DownloadState downloads = 1;
+}
+
 
 

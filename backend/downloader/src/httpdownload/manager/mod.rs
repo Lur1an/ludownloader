@@ -3,7 +3,7 @@ mod item;
 
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
-use async_trait::async_trait;
+use data::types::DownloadMetadata;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -67,6 +67,11 @@ impl DownloadManager {
     pub async fn stop(&self, id: Uuid) -> Result<()> {
         let mut inner = self.inner.write().await;
         inner.stop(id).await
+    }
+
+    pub async fn get_metadata(&self) -> Vec<DownloadMetadata> {
+        let inner = self.inner.read().await;
+        inner.get_metadata().await
     }
 
     pub async fn add(&self, download: HttpDownload) -> Result<Uuid> {

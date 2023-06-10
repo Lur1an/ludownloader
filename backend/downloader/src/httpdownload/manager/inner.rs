@@ -1,6 +1,7 @@
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 
 use async_trait::async_trait;
+use data::types::DownloadMetadata;
 use std::collections::HashMap;
 use tokio::sync::{RwLock, RwLockWriteGuard};
 use tokio::{sync::mpsc, task::JoinHandle};
@@ -28,7 +29,7 @@ impl UpdateConsumer for () {
 pub struct Inner {
     update_ch: mpsc::Sender<DownloadUpdate>,
     _consumer_thread: JoinHandle<()>,
-    items: HashMap<Uuid, DownloaderItem>,
+    pub items: HashMap<Uuid, DownloaderItem>,
 }
 
 impl Default for Inner {
@@ -65,6 +66,14 @@ impl Inner {
         let item = DownloaderItem::new(download);
         self.items.insert(id, item);
         Ok(id)
+    }
+
+    pub async fn get_metadata(&self) -> Vec<DownloadMetadata> {
+        let mut result = Vec::with_capacity(self.items.len());
+        for item in self.items.values() {
+            result.push(item.get_metadata().await);
+        }
+        result
     }
 
     pub async fn edit(&mut self, id: Uuid) -> Result<RwLockWriteGuard<HttpDownload>> {
