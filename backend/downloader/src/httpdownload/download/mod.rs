@@ -10,7 +10,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::util::{file_size, supports_byte_ranges, mb};
+use crate::util::{file_size, supports_byte_ranges, mb, HALF_SECOND};
 
 use self::config::HttpDownloadConfig;
     
@@ -43,7 +43,7 @@ pub struct DownloadUpdate {
 #[derive(Debug)]
 pub enum UpdateType {
     Complete,
-    Paused,
+    Paused(u64),
     Running {
         bytes_downloaded: u64,
         bytes_per_second: u64,
@@ -51,7 +51,6 @@ pub enum UpdateType {
     Error(Error)
 }
 
-const HALF_SECOND: std::time::Duration = std::time::Duration::from_millis(500);
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {

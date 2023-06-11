@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
+use data::types::{download_state::State, DownloadState};
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::httpdownload::observer::SendingUpdateConsumer;
 
@@ -10,8 +13,12 @@ pub mod download;
 pub mod manager;
 pub mod observer;
 
-pub trait DownloadSubscriber {}
-type Subscribers = Arc<Mutex<Vec<Box<dyn DownloadSubscriber + Send>>>>;
+/// This trait is used to subscribe to state updates of downloads
+#[async_trait]
+pub trait DownloadSubscriber {
+    async fn update(&self, updates: Arc<Vec<(Uuid, State)>>);
+}
+type Subscribers = Arc<Mutex<Vec<Arc<dyn DownloadSubscriber + Send + Sync>>>>;
 
 /// Initializes structs needed for the httpdownload module
 pub fn init() -> (DownloadManager, DownloadObserver, Subscribers) {

@@ -55,7 +55,7 @@ impl DownloaderItem {
                     let update_type = if downloaded_bytes == download.content_length {
                         download::UpdateType::Complete
                     } else {
-                        download::UpdateType::Paused
+                        download::UpdateType::Paused(downloaded_bytes)
                     };
                     let _ = update_ch_cl
                         .send(DownloadUpdate {

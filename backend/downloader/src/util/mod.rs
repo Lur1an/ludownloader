@@ -16,6 +16,7 @@ pub async fn file_size(fpath: &Path) -> u64 {
         _ => 0,
     }
 }
+pub const HALF_SECOND: std::time::Duration = std::time::Duration::from_millis(500);
 pub type TestResult<T> = std::result::Result<T, Box<dyn Error>>;
 /**
  * Parses the filename from the download URL
