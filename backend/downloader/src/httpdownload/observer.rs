@@ -24,6 +24,12 @@ use super::{
 #[derive(Clone)]
 pub struct DownloadObserver {}
 
+impl DownloadObserver {
+    pub fn new() -> Self {
+        todo!();
+    }
+}
+
 #[async_trait]
 impl DownloadSubscriber for DownloadObserver {
     async fn update(&self, updates: Arc<Vec<(Uuid, State)>>) {
@@ -92,13 +98,13 @@ impl UpdateConsumer for SendingUpdateConsumer {
                     "Flushing updates from SendingUpdateConsumer to subscribers! Acquiring Lock..."
                 );
                 let guard = subscribers.lock().await;
-                log::info!("Lock on subscribers acquired! Sending updates...");
+                log::info!("Lock on subscribers acquired! Spawning update sender threads...");
                 guard.iter().for_each(|subscriber| {
-                    log::info!("Sending updates to subscriber!");
                     let subscriber = subscriber.clone();
                     tokio::task::spawn_local({
                         let updates = updates.clone();
                         async move {
+                            log::info!("Sending updates to subscriber!");
                             subscriber.update(updates.clone()).await;
                         }
                     });

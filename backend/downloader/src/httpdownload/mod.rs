@@ -25,5 +25,6 @@ pub fn init() -> (DownloadManager, DownloadObserver, Subscribers) {
     let update_consumer = SendingUpdateConsumer::new();
     let subscribers = update_consumer.subscribers.clone();
     let manager = DownloadManager::new(update_consumer);
+    let observer = DownloadObserver::new();
     todo!();
 }

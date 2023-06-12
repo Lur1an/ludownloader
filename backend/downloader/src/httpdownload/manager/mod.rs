@@ -20,7 +20,7 @@ pub enum Error {
     #[error("Error occurred while downloading: {0}")]
     HttpDownloadError(#[from] download::Error),
     #[error("JoinError for download: {0}")]
-    TokioThreadingError(#[from] tokio::task::JoinError),
+    TokioJoinError(#[from] tokio::task::JoinError),
     #[error("Download is not running")]
     DownloadNotRunning,
     #[error("Couldn't acquire Lock for Download: {0}")]
