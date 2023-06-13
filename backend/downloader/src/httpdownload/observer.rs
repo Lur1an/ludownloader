@@ -40,6 +40,14 @@ impl DownloadSubscriber for DownloadObserver {
 /// This struct consumes DownloadUpdate and updates an internal state
 /// Depending on the update type it will immediately notify subscribers of the event.
 /// Also it should periodically send the DownloadState to all subscribers.
+/// Why does this middle-man exist? The DownloadManager is not responsible for keeping track of the
+/// internal state of the downloads, it only forwards actions and returns results to/from
+/// HttpDownloads; if we tried to just use a DownloadObserver that catches in a background thread
+/// all updates from the Manager and shares a State-Map with a Mutex we'd risk filling up the
+/// buffer and locking up everything if we read too much from the Observer. This middle man never
+/// blocks on locks the consumption of updates, it creates an Arc<Vec> that is sent in a
+/// non-blocking manner to all subscribers that then will have to lock up their mutex to update
+/// whatever state they have (or no mutex, maybe it's a Struct that holds a Socket connection)
 pub struct SendingUpdateConsumer {
     pub subscribers: Subscribers,
     last_flush: Instant,
@@ -105,10 +113,9 @@ impl UpdateConsumer for SendingUpdateConsumer {
                         let updates = updates.clone();
                         async move {
                             log::info!("Sending updates to subscriber!");
-                            subscriber.update(updates.clone()).await;
+                            subscriber.update(updates).await;
                         }
                     });
-                    todo!()
                 });
             });
         }
