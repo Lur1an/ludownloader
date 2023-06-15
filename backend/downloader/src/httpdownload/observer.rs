@@ -22,18 +22,32 @@ use super::{
 /// threading internally and be safe to Clone and pass around.
 /// TODO!
 #[derive(Clone)]
-pub struct DownloadObserver {}
+pub struct DownloadObserver {
+    pub inner: Arc<Mutex<HashMap<Uuid, State>>>,
+}
 
 impl DownloadObserver {
     pub fn new() -> Self {
-        todo!();
+        Self {
+            inner: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 }
 
 #[async_trait]
 impl DownloadSubscriber for DownloadObserver {
     async fn update(&self, updates: Arc<Vec<(Uuid, State)>>) {
-        todo!()
+        log::info!("Updating inner state for DownloadObserver, acquiring lock...");
+        let mut guard = self.inner.lock().await;
+        log::info!("Lock acquired, updating {} entries...", updates.len());
+        for (id, state) in updates.iter() {
+            if !guard.contains_key(id) {
+                log::warn!("Received an update for a download whose state is not being tracket by the Observer.");
+                continue;
+            }
+            log::info!("Updating state for download {}", id);
+            guard.insert(*id, state.clone());
+        }
     }
 }
 
@@ -98,6 +112,10 @@ impl UpdateConsumer for SendingUpdateConsumer {
             && !matches!(update.update_type, UpdateType::Running { .. });
         let state = State::from(&update);
         self.cache.insert(update.id, state);
+        // If more than HALF_SECOND has elapsed or the download triggered an event
+        // The cached state is flushed to all subscribers, this operation shouldn't block the
+        // thread that called consume for too long (just the time to create an update array, wrap
+        // it in Arc and spawn the tokio task).
         if flush {
             let updates = Arc::new(self.cache.drain().collect::<Vec<_>>());
             let subscribers = self.subscribers.clone();
