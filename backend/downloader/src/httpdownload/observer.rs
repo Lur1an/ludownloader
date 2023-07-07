@@ -5,22 +5,24 @@ use std::{
 
 use async_trait::async_trait;
 use data::types::{download_state::State, DownloadPaused, DownloadRunning, DownloadState};
-use tokio::{sync::Mutex, time::Instant};
+use tokio::{
+    sync::{Mutex, MutexGuard},
+    time::Instant,
+};
 use uuid::Uuid;
 
 use crate::util::HALF_SECOND;
 
 use super::{
-    download::{self, DownloadUpdate, UpdateType},
+    download::{DownloadUpdate, UpdateType},
     manager::UpdateConsumer,
-    DownloadSubscriber, Subscribers,
+    DownloadUpdateBatchSubscriber, Subscribers,
 };
 
 /// This struct is responsible for keeping the state of all running downloads
 /// It's interal state should subscribe to the SendingUpdateConsumer
 /// This struct as other higher-order application components should handle synchronization and
 /// threading internally and be safe to Clone and pass around.
-/// TODO!
 #[derive(Clone)]
 pub struct DownloadObserver {
     pub inner: Arc<Mutex<HashMap<Uuid, State>>>,
@@ -32,11 +34,14 @@ impl DownloadObserver {
             inner: Arc::new(Mutex::new(HashMap::new())),
         }
     }
+    pub async fn get_state(&self) -> MutexGuard<HashMap<Uuid, State>> {
+        self.inner.lock().await
+    }
 }
 
 #[async_trait]
-impl DownloadSubscriber for DownloadObserver {
-    async fn update(&self, updates: Arc<Vec<(Uuid, State)>>) {
+impl DownloadUpdateBatchSubscriber for DownloadObserver {
+    async fn update(&self, updates: &Vec<(Uuid, State)>) {
         log::info!("Updating inner state for DownloadObserver, acquiring lock...");
         let mut guard = self.inner.lock().await;
         log::info!("Lock acquired, updating {} entries...", updates.len());
@@ -62,13 +67,13 @@ impl DownloadSubscriber for DownloadObserver {
 /// blocks on locks the consumption of updates, it creates an Arc<Vec> that is sent in a
 /// non-blocking manner to all subscribers that then will have to lock up their mutex to update
 /// whatever state they have (or no mutex, maybe it's a Struct that holds a Socket connection)
-pub struct SendingUpdateConsumer {
-    pub subscribers: Subscribers,
+pub struct DownloadUpdatePublisher {
+    subscribers: Subscribers,
     last_flush: Instant,
     cache: HashMap<Uuid, State>,
 }
 
-impl SendingUpdateConsumer {
+impl DownloadUpdatePublisher {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -78,7 +83,7 @@ impl SendingUpdateConsumer {
     }
     pub async fn add_subscriber(
         &self,
-        subscriber: impl DownloadSubscriber + Send + 'static + Sync,
+        subscriber: impl DownloadUpdateBatchSubscriber + Send + 'static + Sync,
     ) {
         let mut guard = self.subscribers.lock().await;
         guard.push(Arc::new(subscriber));
@@ -106,7 +111,7 @@ impl From<&DownloadUpdate> for State {
     }
 }
 
-impl UpdateConsumer for SendingUpdateConsumer {
+impl UpdateConsumer for DownloadUpdatePublisher {
     fn consume(&mut self, update: DownloadUpdate) {
         let flush = self.last_flush.elapsed() > HALF_SECOND
             && !matches!(update.update_type, UpdateType::Running { .. });
@@ -127,11 +132,11 @@ impl UpdateConsumer for SendingUpdateConsumer {
                 log::info!("Lock on subscribers acquired! Spawning update sender threads...");
                 guard.iter().for_each(|subscriber| {
                     let subscriber = subscriber.clone();
-                    tokio::task::spawn_local({
+                    tokio::spawn({
                         let updates = updates.clone();
                         async move {
                             log::info!("Sending updates to subscriber!");
-                            subscriber.update(updates).await;
+                            subscriber.update(&updates).await;
                         }
                     });
                 });

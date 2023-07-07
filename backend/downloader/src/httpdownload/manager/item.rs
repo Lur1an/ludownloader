@@ -6,22 +6,19 @@ use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
 use tokio::task::JoinHandle;
 
+/// Wrapper over HttpDownload to allow multi-threaded managing
 #[derive(Debug)]
 pub struct DownloaderItem {
     pub download: Arc<RwLock<HttpDownload>>,
-    pub handle: Option<(JoinHandle<()>, oneshot::Sender<()>)>,
+    tx: Option<oneshot::Sender<()>>,
 }
 
 impl DownloaderItem {
     pub fn new(download: HttpDownload) -> Self {
         DownloaderItem {
             download: Arc::new(RwLock::new(download)),
-            handle: None,
+            tx: None,
         }
-    }
-
-    fn is_running(&self) -> bool {
-        self.handle.is_some()
     }
 
     pub async fn get_metadata(&self) -> DownloadMetadata {
@@ -37,7 +34,7 @@ impl DownloaderItem {
     pub fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
         let (tx, rx) = oneshot::channel();
         let download_arc = self.download.clone();
-        let thread_handle = tokio::spawn(async move {
+        tokio::spawn(async move {
             let download = download_arc.read().await;
             log::info!(
                 "Acquired read lock for download: {}, resume: {}",
@@ -45,12 +42,12 @@ impl DownloaderItem {
                 resume
             );
             let update_ch_cl = update_ch.clone();
-            let result = if resume {
+            let download_result = if resume {
                 download.resume(rx, update_ch).await
             } else {
                 download.start(rx, update_ch).await
             };
-            match result {
+            match download_result {
                 Ok(downloaded_bytes) => {
                     let update_type = if downloaded_bytes == download.content_length {
                         download::UpdateType::Complete
@@ -79,24 +76,15 @@ impl DownloaderItem {
                 }
             }
         });
-        self.handle = Some((thread_handle, tx));
+        self.tx = Some(tx);
     }
 
     pub async fn stop(&mut self) -> Result<()> {
-        if let Some((handle, tx)) = self.handle.take() {
+        if let Some(tx) = self.tx.take() {
             let _ = tx.send(());
-            let result = handle.await?;
-            Ok(result)
+            Ok(())
         } else {
             Err(Error::DownloadNotRunning)
-        }
-    }
-
-    pub async fn complete(&mut self) -> Result<()> {
-        if let Some((handle, _tx)) = self.handle.take() {
-            Ok(handle.await?)
-        } else {
-            return Err(Error::DownloadNotRunning);
         }
     }
 }

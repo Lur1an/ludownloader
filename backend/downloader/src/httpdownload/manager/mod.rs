@@ -4,6 +4,7 @@ mod item;
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use data::types::DownloadMetadata;
+use std::ops::Deref;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::RwLock;
@@ -38,25 +39,17 @@ pub trait UpdateConsumer {
 /// TODO: Add a way to time out if lock-acquisition takes too long (not expected as it's 1-2 user
 /// only anyways)
 /// This struct is supposed to be cloned as it uses an Arc internally.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DownloadManager {
     inner: Arc<RwLock<Inner>>,
-}
-
-impl Default for DownloadManager {
-    fn default() -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(Inner::default())),
-        }
-    }
 }
 
 impl DownloadManager {
     /// The update_consumer is placed in a separate thread and will receive all updates from all downloads.
     pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
-        Self {
-            inner: Arc::new(RwLock::new(Inner::new(update_consumer))),
-        }
+        let inner = Arc::new(RwLock::new(Inner::new(update_consumer)));
+        let manager = Self { inner };
+        manager
     }
 
     pub async fn start(&self, id: Uuid) -> Result<()> {
@@ -78,6 +71,10 @@ impl DownloadManager {
         let mut inner = self.inner.write().await;
         let id = inner.add(download)?;
         Ok(id)
+    }
+
+    pub async fn delete(&self, id: Uuid) -> Result<()> {
+        todo!()
     }
 }
 

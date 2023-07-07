@@ -1,6 +1,6 @@
 pub mod config;
 
-use thiserror::Error;
+use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
@@ -14,7 +14,7 @@ use crate::util::{file_size, supports_byte_ranges, mb, HALF_SECOND};
 
 use self::config::HttpDownloadConfig;
     
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("File IO operation failed, error: '{0}'")]
     Io(#[from] tokio::io::Error),
@@ -50,7 +50,6 @@ pub enum UpdateType {
     },
     Error(Error)
 }
-
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
@@ -126,16 +125,37 @@ impl HttpDownload {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_default();
         let id = uuid::Uuid::new_v4();
-        let mut download = HttpDownload {
+        let resp = 
+            client
+            .get(url.as_ref())
+            .timeout(config.timeout)
+            .headers(config.headers.clone())
+            .send()
+            .await?;
+
+        let status = resp.status();
+        match status {
+            reqwest::StatusCode::OK => {}
+            _ => {
+                let body = resp.text().await.unwrap_or_default();
+                return Err(Error::DownloadNotOk(status, body))
+            },
+        };
+
+        let content_length = match resp.content_length() {
+            Some(val) => Ok(val),
+            None => Err(Error::MissingContentLength(url.clone())),
+        }?;
+        let supports_byte_ranges = supports_byte_ranges(resp.headers());
+        let download = HttpDownload {
             id,
             url,
             file_path,
             config,
             client,
-            supports_byte_ranges: false,
-            content_length: 0u64,
+            supports_byte_ranges,
+            content_length,
         };
-        download.update_server_data().await?;
         Ok(download)
     }
 
@@ -198,37 +218,6 @@ impl HttpDownload {
         Ok(downloaded_bytes)
     }
 
-    /**
-    Queries the server to update Download metadata.
-    * updates content_length
-    * updates accepts_bytes
-     */
-    async fn update_server_data(&mut self) -> Result<()> {
-        let resp = self
-            .client
-            .get(self.url.as_ref())
-            .timeout(self.config.timeout)
-            .headers(self.config.headers.clone())
-            .send()
-            .await?;
-
-        let status = resp.status();
-        match status {
-            reqwest::StatusCode::OK => {}
-            _ => {
-                let body = resp.text().await.unwrap_or_default();
-                return Err(Error::DownloadNotOk(status, body))
-            },
-        };
-
-        match resp.content_length() {
-            Some(val) => self.content_length = val,
-            None => Err(Error::MissingContentLength(self.url.clone()))?,
-        }
-        self.supports_byte_ranges = supports_byte_ranges(resp.headers());
-        Ok(())
-    }
-
     pub async fn get_bytes_on_disk(&self) -> u64 {
         file_size(&self.file_path).await
     }
@@ -237,7 +226,6 @@ impl HttpDownload {
 #[cfg(test)]
 mod test {
     use std::error::Error;
-    use std::iter::zip;
     use std::sync::Arc;
     use test_log::test;
 

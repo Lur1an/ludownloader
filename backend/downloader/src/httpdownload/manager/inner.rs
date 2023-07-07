@@ -1,41 +1,30 @@
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 
-use async_trait::async_trait;
 use data::types::DownloadMetadata;
 use std::collections::HashMap;
-use tokio::sync::{RwLock, RwLockWriteGuard};
+use tokio::sync::RwLockWriteGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
 
 use super::item::DownloaderItem;
 use super::{Error, Result, UpdateConsumer};
 
-#[derive(Default)]
-struct DefaultUpdateConsumer;
-
-impl UpdateConsumer for DefaultUpdateConsumer {
+impl UpdateConsumer for () {
     fn consume(&mut self, update: DownloadUpdate) {
         log::info!("Update: {:?}", update);
     }
 }
 
-impl UpdateConsumer for () {
-    fn consume(&mut self, update: DownloadUpdate) {
-        todo!()
-    }
-}
-
 #[derive(Debug)]
 pub struct Inner {
-    update_ch: mpsc::Sender<DownloadUpdate>,
+    pub update_ch: mpsc::Sender<DownloadUpdate>,
     _consumer_thread: JoinHandle<()>,
     pub items: HashMap<Uuid, DownloaderItem>,
 }
 
 impl Default for Inner {
     fn default() -> Self {
-        let updater = DefaultUpdateConsumer::default();
-        Inner::new(updater)
+        Inner::new(())
     }
 }
 
@@ -100,16 +89,6 @@ impl Inner {
         if let Some(mut item) = self.items.remove(&id) {
             log::info!("Stopping download {}", id);
             item.stop().await
-        } else {
-            Err(Error::Access(format!("Download with id {} not found", id)))
-        }
-    }
-
-    pub async fn complete(&mut self, id: Uuid) -> Result<()> {
-        log::info!("Complete action requested for download: {}", id);
-        if let Some(mut item) = self.items.remove(&id) {
-            log::info!("Running download {} to completion.", id);
-            item.complete().await
         } else {
             Err(Error::Access(format!("Download with id {} not found", id)))
         }
