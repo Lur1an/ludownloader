@@ -60,7 +60,7 @@ pub async fn setup_test_download(url_str: &str) -> Result<(HttpDownload, TempDir
     let url = Url::parse(url_str)?;
     let file_path = tmp_path.join(PathBuf::from(parse_filename(&url).unwrap()));
     let client = Client::new();
-    let download = HttpDownload::new(url, file_path, client, None).await?;
+    let download = HttpDownload::create(url, file_path, client, None).await?;
     Ok((download, tmp_dir))
 }
 

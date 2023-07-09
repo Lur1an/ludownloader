@@ -8,10 +8,13 @@ use axum::{
     routing::{delete, post},
     Json, Router,
 };
-use downloader::httpdownload::{
-    download::HttpDownload,
-    manager::{self, DownloadManager},
-    observer::DownloadObserver,
+use downloader::{
+    httpdownload::{
+        download::HttpDownload,
+        manager::{self, DownloadManager},
+        observer::DownloadObserver,
+    },
+    util::parse_filename,
 };
 use reqwest::{Client, StatusCode, Url};
 use serde_json::json;
@@ -50,14 +53,22 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
             return (StatusCode::BAD_REQUEST, message);
         }
     };
-
-    let file_path = state
+    let download_directory = state
         .setting_manager
         .read()
         .await
         .default_download_dir
         .clone();
-    let download = match HttpDownload::new(url, file_path, state.client.clone(), None).await {
+    let file_path = if let Some(file_name) = parse_filename(&url) {
+        download_directory.join(file_name)
+    } else {
+        let error = CreateDownloadError {
+            error: "Couldn't parse filename from url".to_owned(),
+        };
+        let message = prost::Message::encode_to_vec(&error);
+        return (StatusCode::BAD_REQUEST, message);
+    };
+    let download = match HttpDownload::create(url, file_path, state.client.clone(), None).await {
         Ok(d) => d,
         Err(e) => {
             let error = CreateDownloadError {
@@ -76,6 +87,6 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
 pub fn routes() -> Router<ApplicationState> {
     let app_router = Router::new()
         .route("/", post(create_download))
-        .route("/:id", delete(pause_download));
+        .route("/:id", delete(delete_download));
     app_router
 }

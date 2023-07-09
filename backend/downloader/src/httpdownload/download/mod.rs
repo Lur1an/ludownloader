@@ -115,7 +115,7 @@ impl HttpDownload {
         Ok(self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk).await?)
     }
 
-    pub async fn new(
+    pub async fn create(
         url: Url,
         file_path: PathBuf,
         client: Client,
@@ -260,7 +260,7 @@ mod test {
         let url = Url::parse(url_str)?;
         let file_path = PathBuf::from(parse_filename(&url).unwrap());
         // when creating a download, server data is present in the download struct
-        let download = HttpDownload::new(url, file_path, Client::new(), None).await?;
+        let download = HttpDownload::create(url, file_path, Client::new(), None).await?;
         // then
         assert!(
             download.supports_byte_ranges,

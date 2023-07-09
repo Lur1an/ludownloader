@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use api::proto::{download_state::State, DownloadState};
+use api::proto::download_state::State;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -57,9 +57,10 @@ mod test {
             .await;
 
         manager.start(id).await?;
-        tokio::time::sleep(tokio::time::Duration::from_secs(10)).await;
         manager.stop(id).await?;
-        log::info!("Observer state: {:?}", observer.read_state().await);
+        let state = observer.read_state().await;
+        let download_state = state.get(&id).unwrap();
+        assert!(matches!(download_state, State::Paused { .. }));
         Ok(())
     }
 }
