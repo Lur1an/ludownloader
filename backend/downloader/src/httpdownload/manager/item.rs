@@ -35,12 +35,14 @@ impl DownloaderItem {
                 download.id,
                 resume
             );
+
             let update_ch_cl = update_ch.clone();
             let download_result = if resume {
                 download.resume(rx, update_ch).await
             } else {
                 download.start(rx, update_ch).await
             };
+
             match download_result {
                 Ok(downloaded_bytes) => {
                     let update_type = if downloaded_bytes == download.content_length {

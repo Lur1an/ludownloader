@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
-use api::proto::CreateDownloadError;
+use api::proto::{self, CreateDownloadError, DownloadPaused};
 use axum::{
     extract::State,
     http::Response,
     response::IntoResponse,
-    routing::{delete, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use downloader::{
@@ -39,6 +39,14 @@ async fn pause_download() {
 }
 
 async fn resume_download() {
+    todo!()
+}
+
+async fn get_metadata(state: State<ApplicationState>) -> impl IntoResponse {
+    todo!()
+}
+
+async fn get_state(state: State<ApplicationState>) -> impl IntoResponse {
     todo!()
 }
 
@@ -80,13 +88,24 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
     };
     let metadata = download.get_metadata();
     let body = prost::Message::encode_to_vec(&metadata);
-    state.manager.add(download).await;
+    let id = state.manager.add(download).await;
+    state
+        .observer
+        .track(
+            id,
+            proto::download_state::State::Paused(DownloadPaused {
+                bytes_downloaded: 0,
+            }),
+        )
+        .await;
     (StatusCode::CREATED, body)
 }
 
 pub fn routes() -> Router<ApplicationState> {
     let app_router = Router::new()
         .route("/", post(create_download))
+        .route("/metadata", get(get_metadata))
+        .route("/state", get(get_state))
         .route("/:id", delete(delete_download));
     app_router
 }
