@@ -78,7 +78,6 @@ impl HttpDownload {
         self.progress(resp, file_handler, stop_ch, update_ch, 0).await
     }
 
-
     pub async fn resume(
         &self,
         stop_ch: oneshot::Receiver<()>,
@@ -218,8 +217,23 @@ impl HttpDownload {
         Ok(downloaded_bytes)
     }
 
+    pub fn get_metadata(&self) -> api::proto::DownloadMetadata {
+        self.into()
+    }
+
     pub async fn get_bytes_on_disk(&self) -> u64 {
         file_size(&self.file_path).await
+    }
+}
+
+impl From<&HttpDownload> for api::proto::DownloadMetadata {
+    fn from(value: &HttpDownload) -> Self {
+        api::proto::DownloadMetadata {
+            uuid: value.id.as_bytes().to_vec(),
+            url: value.url.to_string(),
+            file_path: value.file_path.to_string_lossy().to_string(),
+            content_length: value.content_length,
+        }
     }
 }
 

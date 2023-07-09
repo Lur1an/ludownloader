@@ -3,10 +3,12 @@ use std::{
     sync::Arc,
 };
 
+use api::proto::{
+    download_state::State, DownloadComplete, DownloadPaused, DownloadRunning, DownloadState,
+};
 use async_trait::async_trait;
-use data::types::{download_state::State, DownloadPaused, DownloadRunning, DownloadState};
 use tokio::{
-    sync::{Mutex, MutexGuard},
+    sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard},
     time::Instant,
 };
 use uuid::Uuid;
@@ -25,17 +27,22 @@ use super::{
 /// threading internally and be safe to Clone and pass around.
 #[derive(Clone)]
 pub struct DownloadObserver {
-    pub inner: Arc<Mutex<HashMap<Uuid, State>>>,
+    pub state: Arc<RwLock<HashMap<Uuid, State>>>,
 }
 
 impl DownloadObserver {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    pub async fn get_state(&self) -> MutexGuard<HashMap<Uuid, State>> {
-        self.inner.lock().await
+    pub async fn read_state(&self) -> RwLockReadGuard<HashMap<Uuid, State>> {
+        self.state.read().await
+    }
+
+    pub async fn track(&self, id: Uuid, state: State) {
+        let mut guard = self.state.write().await;
+        guard.insert(id, state);
     }
 }
 
@@ -43,7 +50,7 @@ impl DownloadObserver {
 impl DownloadUpdateBatchSubscriber for DownloadObserver {
     async fn update(&self, updates: &Vec<(Uuid, State)>) {
         log::info!("Updating inner state for DownloadObserver, acquiring lock...");
-        let mut guard = self.inner.lock().await;
+        let mut guard = self.state.write().await;
         log::info!("Lock acquired, updating {} entries...", updates.len());
         for (id, state) in updates.iter() {
             if !guard.contains_key(id) {
@@ -56,19 +63,18 @@ impl DownloadUpdateBatchSubscriber for DownloadObserver {
     }
 }
 
-/// This struct consumes DownloadUpdate and updates an internal state
+/// This struct consumes DownloadUpdate and updates an internal state that is aggregating all
+/// states of the recorded downloads.
 /// Depending on the update type it will immediately notify subscribers of the event.
-/// Also it should periodically send the DownloadState to all subscribers.
 /// Why does this middle-man exist? The DownloadManager is not responsible for keeping track of the
-/// internal state of the downloads, it only forwards actions and returns results to/from
-/// HttpDownloads; if we tried to just use a DownloadObserver that catches in a background thread
+/// internal state of the downloads, it only forwards events to HttpDownloads;
+/// if we tried to just use a DownloadObserver that catches in a background thread
 /// all updates from the Manager and shares a State-Map with a Mutex we'd risk filling up the
 /// buffer and locking up everything if we read too much from the Observer. This middle man never
-/// blocks on locks the consumption of updates, it creates an Arc<Vec> that is sent in a
-/// non-blocking manner to all subscribers that then will have to lock up their mutex to update
-/// whatever state they have (or no mutex, maybe it's a Struct that holds a Socket connection)
+/// blocks during the consumption of updates, it creates an Arc<Vec> of the aggregated state that is sent in a
+/// non-blocking manner to all subscribers that then will have to consume the updates
 pub struct DownloadUpdatePublisher {
-    subscribers: Subscribers,
+    pub subscribers: Subscribers,
     last_flush: Instant,
     cache: HashMap<Uuid, State>,
 }
@@ -93,7 +99,7 @@ impl DownloadUpdatePublisher {
 impl From<&DownloadUpdate> for State {
     fn from(value: &DownloadUpdate) -> Self {
         match &value.update_type {
-            UpdateType::Complete => State::Complete(true),
+            UpdateType::Complete => State::Complete(DownloadComplete {}),
             UpdateType::Paused(bytes_downloaded) => State::Paused(DownloadPaused {
                 bytes_downloaded: *bytes_downloaded,
             }),
@@ -142,17 +148,5 @@ impl UpdateConsumer for DownloadUpdatePublisher {
                 });
             });
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::util::TestResult;
-
-    use super::*;
-    use test_log::test;
-    #[test(tokio::test)]
-    async fn test_flush_on_update() -> TestResult<()> {
-        Ok(())
     }
 }

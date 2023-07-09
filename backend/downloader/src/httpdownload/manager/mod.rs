@@ -3,7 +3,7 @@ mod item;
 
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
-use data::types::DownloadMetadata;
+use api::proto::DownloadMetadata;
 use std::ops::Deref;
 use std::sync::Arc;
 use thiserror::Error;
@@ -62,15 +62,15 @@ impl DownloadManager {
         inner.stop(id).await
     }
 
-    pub async fn get_metadata(&self) -> Vec<DownloadMetadata> {
+    pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let inner = self.inner.read().await;
-        inner.get_metadata().await
+        inner.get_metadata_all().await
     }
 
-    pub async fn add(&self, download: HttpDownload) -> Result<Uuid> {
+    pub async fn add(&self, download: HttpDownload) -> Uuid {
         let mut inner = self.inner.write().await;
-        let id = inner.add(download)?;
-        Ok(id)
+        let id = inner.add(download);
+        id
     }
 
     pub async fn delete(&self, id: Uuid) -> Result<()> {
@@ -95,7 +95,7 @@ mod test {
         let manager = DownloadManager::default();
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let download_path = download.file_path.clone();
-        let id = manager.add(download).await?;
+        let id = manager.add(download).await;
         manager.start(id).await?;
         time::sleep(time::Duration::from_secs(1)).await;
         manager.stop(id).await?;

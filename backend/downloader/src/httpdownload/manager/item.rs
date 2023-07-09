@@ -1,10 +1,9 @@
 use super::download;
 use super::download::{DownloadUpdate, HttpDownload};
 use crate::httpdownload::manager::{Error, Result};
-use data::types::DownloadMetadata;
+use api::proto::DownloadMetadata;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, RwLock};
-use tokio::task::JoinHandle;
 
 /// Wrapper over HttpDownload to allow multi-threaded managing
 #[derive(Debug)]
@@ -23,12 +22,7 @@ impl DownloaderItem {
 
     pub async fn get_metadata(&self) -> DownloadMetadata {
         let download = self.download.read().await;
-        DownloadMetadata {
-            uuid: download.id.as_bytes().to_vec(),
-            url: download.url.to_string(),
-            file_path: download.file_path.to_string_lossy().to_string(),
-            content_length: download.content_length,
-        }
+        download.get_metadata()
     }
 
     pub fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {

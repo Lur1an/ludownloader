@@ -5,11 +5,18 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "server"
+
 [dependencies]
 axum = "0.6.18"
 bytes = "1.4.0"
 downloader = { path = "../downloader" }
-data = { path = "../data" }
+api = { path = "../api" }
 env_logger = "0.10.0"
 log = "0.4.18"
 serde = { version = "1.0.163", features = ["derive"] }
@@ -22,4 +29,5 @@ dirs = "5.0.1"
 async-trait = "0.1.68"
 prost = "0.11.9"
 prost-types = "0.11.9"
+reqwest = "0.11.18"
 

@@ -1,5 +1,5 @@
 syntax = "proto3";
-package types;
+package proto;
 
 
 message DownloadRunning {
@@ -18,13 +18,19 @@ message DownloadMetadata {
     bytes uuid = 4;
 }
 
+message CreateDownloadError {
+    string error = 1;
+}
+
+message DownloadComplete {}
+
 message DownloadState {
-    DownloadMetadata metadata = 1;
+    bytes uuid = 1;
     oneof state {
         DownloadRunning running = 2;
         DownloadPaused paused = 3;
         string error = 4;
-        bool complete = 5;
+        DownloadComplete complete = 5;
     }
 }
 

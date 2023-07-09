@@ -1,7 +1,8 @@
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 
-use data::types::DownloadMetadata;
+use api::proto::DownloadMetadata;
 use std::collections::HashMap;
+use std::process::exit;
 use tokio::sync::RwLockWriteGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
@@ -36,10 +37,9 @@ impl Inner {
             while let Some(update) = update_recv.recv().await {
                 update_consumer.consume(update);
             }
-            log::error!("Update channel closed, last update_sender has been dropped");
-            log::error!(
-                "This thread should live as long as the program, so this should never happen."
-            );
+            log::warn!("Update channel closed, last update_sender has been dropped");
+            log::error!("Download update consumer thread should live as long as the program, so this should never happen.");
+            exit(1);
         });
 
         Inner {
@@ -49,15 +49,15 @@ impl Inner {
         }
     }
 
-    pub fn add(&mut self, download: HttpDownload) -> Result<Uuid> {
+    pub fn add(&mut self, download: HttpDownload) -> Uuid {
         log::info!("Adding download: {:?}", download);
         let id = download.id;
         let item = DownloaderItem::new(download);
         self.items.insert(id, item);
-        Ok(id)
+        id
     }
 
-    pub async fn get_metadata(&self) -> Vec<DownloadMetadata> {
+    pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let mut result = Vec::with_capacity(self.items.len());
         for item in self.items.values() {
             result.push(item.get_metadata().await);
