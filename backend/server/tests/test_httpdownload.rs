@@ -1,4 +1,8 @@
-use api::proto::{CreateDownloadError, DownloadMetadata};
+use std::io::Read;
+
+use api::proto::{
+    create_download_response::Response, DownloadMetadata, DownloadPaused, MetadataBatch, StateBatch,
+};
 use async_trait::async_trait;
 use prost::Message;
 use reqwest::{StatusCode, Url};
@@ -38,13 +42,36 @@ async fn test_create_download(ctx: &mut IntegrationTestContext) {
     assert_eq!(resp.status(), StatusCode::CREATED);
     let metadata: DownloadMetadata = Message::decode(resp.bytes().await.unwrap()).unwrap();
     assert_eq!(metadata.content_length, 1048576000);
+    let incorrect_url = "hgesdg98wq19".to_owned();
+    let resp = ctx
+        .client
+        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+        .body(incorrect_url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Invalid URL"));
+    let fake_url = "http://ahahahahahaha_wtf.com/something.zip";
+    let resp = ctx
+        .client
+        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+        .body(fake_url)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = resp.text().await.unwrap();
+    assert!(body.contains("Error creating download"));
 }
 
 #[test_context(IntegrationTestContext)]
 #[test(tokio::test)]
-async fn test_create_multiple_downloads(ctx: &mut IntegrationTestContext) {
+async fn test_multiple_downloads_crud(ctx: &mut IntegrationTestContext) {
+    let download_url = "https://speed.hetzner.de/1GB.bin";
     for _ in 0..20 {
-        let body = "https://speed.hetzner.de/1GB.bin".to_owned();
+        let body = download_url.to_owned();
         let resp = ctx
             .client
             .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
@@ -53,5 +80,35 @@ async fn test_create_multiple_downloads(ctx: &mut IntegrationTestContext) {
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
+    }
+    let resp = ctx
+        .client
+        .get(
+            ctx.server_url
+                .join("/api/v1/httpdownload/metadata")
+                .unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    let metadata: MetadataBatch = Message::decode(resp.bytes().await.unwrap()).unwrap();
+    assert_eq!(metadata.value.len(), 20);
+    for metadata in metadata.value.iter() {
+        assert_eq!(metadata.url, download_url);
+    }
+    let resp = ctx
+        .client
+        .get(ctx.server_url.join("/api/v1/httpdownload/state").unwrap())
+        .send()
+        .await
+        .unwrap();
+    let state: StateBatch = Message::decode(resp.bytes().await.unwrap()).unwrap();
+    for state in state.value.iter().cloned() {
+        assert!(matches!(
+            state.state.unwrap(),
+            api::proto::download_state::State::Paused(DownloadPaused {
+                bytes_downloaded: 0
+            })
+        ));
     }
 }

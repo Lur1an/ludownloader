@@ -3,7 +3,7 @@ use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use api::proto::DownloadMetadata;
 use std::collections::HashMap;
 use std::process::exit;
-use tokio::sync::RwLockWriteGuard;
+use tokio::sync::{MutexGuard, RwLockWriteGuard};
 use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
 
@@ -60,14 +60,14 @@ impl Inner {
     pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let mut result = Vec::with_capacity(self.items.len());
         for item in self.items.values() {
-            result.push(item.get_metadata().await);
+            result.push(item.metadata.clone());
         }
         result
     }
 
-    pub async fn edit(&mut self, id: Uuid) -> Result<RwLockWriteGuard<HttpDownload>> {
+    pub async fn edit(&mut self, id: Uuid) -> Result<MutexGuard<HttpDownload>> {
         if let Some(item) = self.items.get_mut(&id) {
-            let guard = item.download.try_write()?;
+            let guard = item.download.try_lock()?;
             Ok(guard)
         } else {
             Err(Error::Access(format!("Download with id {} not found", id)))

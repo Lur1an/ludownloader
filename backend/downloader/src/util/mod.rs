@@ -22,7 +22,7 @@ pub type TestResult<T> = std::result::Result<T, Box<dyn Error>>;
  * Parses the filename from the download URL
  * Returns None if there is no filename or if url.path_segments() fails
  */
-pub fn parse_filename(url: &Url) -> Option<&str> {
+pub fn parse_filename<'a>(url: &'a Url) -> Option<&'a str> {
     let segments = url.path_segments()?;
     let filename = segments.last()?;
     if filename.is_empty() {

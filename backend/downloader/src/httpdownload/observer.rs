@@ -5,6 +5,7 @@ use std::{
 
 use api::proto::{
     download_state::State, DownloadComplete, DownloadPaused, DownloadRunning, DownloadState,
+    StateBatch,
 };
 use async_trait::async_trait;
 use tokio::{
@@ -38,6 +39,23 @@ impl DownloadObserver {
     }
     pub async fn read_state(&self) -> RwLockReadGuard<HashMap<Uuid, State>> {
         self.state.read().await
+    }
+
+    pub async fn get_state_all(&self) -> StateBatch {
+        let guard = self.state.read().await;
+        let value = guard
+            .iter()
+            .map(|(id, state)| DownloadState {
+                uuid: id.as_bytes().to_vec(),
+                state: Some(state.clone()),
+            })
+            .collect::<Vec<_>>();
+        StateBatch { value }
+    }
+
+    pub async fn get_state(&self, id: Uuid) -> Option<State> {
+        let guard = self.state.read().await;
+        guard.get(&id).cloned()
     }
 
     pub async fn track(&self, id: Uuid, state: State) {

@@ -3,33 +3,35 @@ use super::download::{DownloadUpdate, HttpDownload};
 use crate::httpdownload::manager::{Error, Result};
 use api::proto::DownloadMetadata;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 
 /// Wrapper over HttpDownload to allow multi-threaded managing
+/// TODO: add packages to allow batching download commands
 #[derive(Debug)]
 pub struct DownloaderItem {
-    pub download: Arc<RwLock<HttpDownload>>,
+    pub download: Arc<Mutex<HttpDownload>>,
+    pub metadata: DownloadMetadata,
     tx: Option<oneshot::Sender<()>>,
 }
 
 impl DownloaderItem {
     pub fn new(download: HttpDownload) -> Self {
         DownloaderItem {
-            download: Arc::new(RwLock::new(download)),
+            metadata: download.get_metadata(),
+            download: Arc::new(Mutex::new(download)),
             tx: None,
         }
     }
 
-    pub async fn get_metadata(&self) -> DownloadMetadata {
-        let download = self.download.read().await;
-        download.get_metadata()
+    pub async fn is_locked(&self) -> bool {
+        self.download.try_lock().is_err()
     }
 
     pub fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
         let (tx, rx) = oneshot::channel();
         let download_arc = self.download.clone();
         tokio::spawn(async move {
-            let download = download_arc.read().await;
+            let download = download_arc.lock().await;
             log::info!(
                 "Acquired read lock for download: {}, resume: {}",
                 download.id,

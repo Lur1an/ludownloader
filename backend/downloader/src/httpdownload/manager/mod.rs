@@ -3,7 +3,7 @@ mod item;
 
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
-use api::proto::DownloadMetadata;
+use api::proto::{DownloadMetadata, MetadataBatch};
 use std::ops::Deref;
 use std::sync::Arc;
 use thiserror::Error;
@@ -36,7 +36,6 @@ pub trait UpdateConsumer {
 /// This struct takes care of storing/running/stopping downloads.
 /// Internally it uses a RwLock to allow for concurrent access,
 /// this exposes a thread-safe interface.
-/// TODO: Add a way to time out if lock-acquisition takes too long (not expected as it's 1-2 user
 /// only anyways)
 /// This struct is supposed to be cloned as it uses an Arc internally.
 #[derive(Clone, Default)]
@@ -62,9 +61,11 @@ impl DownloadManager {
         inner.stop(id).await
     }
 
-    pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
+    pub async fn get_metadata_all(&self) -> MetadataBatch {
         let inner = self.inner.read().await;
-        inner.get_metadata_all().await
+        MetadataBatch {
+            value: inner.get_metadata_all().await,
+        }
     }
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
