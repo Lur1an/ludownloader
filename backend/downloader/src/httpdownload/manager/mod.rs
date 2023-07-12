@@ -51,14 +51,14 @@ impl DownloadManager {
         manager
     }
 
-    pub async fn start(&self, id: Uuid) -> Result<()> {
+    pub async fn start(&self, id: &Uuid) -> Result<()> {
         let mut inner = self.inner.write().await;
         inner.start(id)
     }
 
-    pub async fn stop(&self, id: Uuid) -> Result<()> {
+    pub async fn stop(&self, id: &Uuid) -> Result<()> {
         let mut inner = self.inner.write().await;
-        inner.stop(id).await
+        inner.stop(id)
     }
 
     pub async fn get_metadata_all(&self) -> MetadataBatch {
@@ -74,8 +74,26 @@ impl DownloadManager {
         id
     }
 
-    pub async fn delete(&self, id: Uuid) -> Result<()> {
-        todo!()
+    pub async fn delete(&self, id: &Uuid, delete_file: bool) -> Result<()> {
+        let mut inner = self.inner.write().await;
+        if let Err(Error::Access(e)) = inner.stop(id) {
+            return Err(Error::Access(e));
+        }
+        if let Some(item) = inner.remove(id) {
+            if delete_file {
+                let file_path = item.metadata.file_path;
+                match tokio::fs::remove_file(file_path).await {
+                    Err(e) => log::warn!(
+                        "Couldn't delete file for httpdownload after removing from manager: {}",
+                        e
+                    ),
+                    _ => (),
+                };
+            }
+        };
+        // This is not tested yet!
+        todo!();
+        Ok(())
     }
 }
 
@@ -85,7 +103,7 @@ mod test {
     use crate::util::{file_size, setup_test_download};
     use std::error::Error;
     use test_log::test;
-    use tokio::{sync::mpsc::Sender, time};
+    use tokio::time;
 
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
@@ -95,11 +113,11 @@ mod test {
     async fn start_and_stop_download() -> Test<()> {
         let manager = DownloadManager::default();
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
-        let download_path = download.file_path.clone();
+        let download_path = download.file_path();
         let id = manager.add(download).await;
-        manager.start(id).await?;
+        manager.start(&id).await?;
         time::sleep(time::Duration::from_secs(1)).await;
-        manager.stop(id).await?;
+        manager.stop(&id).await?;
         let downloaded_bytes = file_size(&download_path).await;
         assert_ne!(
             downloaded_bytes, 0,

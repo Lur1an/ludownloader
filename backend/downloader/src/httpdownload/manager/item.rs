@@ -3,7 +3,7 @@ use super::download::{DownloadUpdate, HttpDownload};
 use crate::httpdownload::manager::{Error, Result};
 use api::proto::DownloadMetadata;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Wrapper over HttpDownload to allow multi-threaded managing
 /// TODO: add packages to allow batching download commands
@@ -11,6 +11,9 @@ use tokio::sync::{mpsc, oneshot, Mutex, RwLock};
 pub struct DownloaderItem {
     pub download: Arc<Mutex<HttpDownload>>,
     pub metadata: DownloadMetadata,
+    /// This sender contains the channel to notify the thread to stop the download function
+    /// This is only None if the Download has been stopped, there are edge cases where the function
+    /// crashes and the tx value is still Some(tx)
     tx: Option<oneshot::Sender<()>>,
 }
 
@@ -23,7 +26,7 @@ impl DownloaderItem {
         }
     }
 
-    pub async fn is_locked(&self) -> bool {
+    pub fn is_locked(&self) -> bool {
         self.download.try_lock().is_err()
     }
 
@@ -77,7 +80,7 @@ impl DownloaderItem {
         self.tx = Some(tx);
     }
 
-    pub async fn stop(&mut self) -> Result<()> {
+    pub fn stop(&mut self) -> Result<()> {
         if let Some(tx) = self.tx.take() {
             let _ = tx.send(());
             Ok(())

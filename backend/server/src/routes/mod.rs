@@ -72,13 +72,21 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
         .await
         .default_download_dir
         .clone();
-    let file_path = if let Some(file_name) = parse_filename(&url) {
-        download_directory.join(file_name)
+    let file_name = if let Some(file_name) = parse_filename(&url) {
+        file_name.to_owned()
     } else {
         let error = "Couldn't parse filename from url";
         return (StatusCode::BAD_REQUEST, error.to_owned().into_bytes());
     };
-    let download = match HttpDownload::create(url, file_path, state.client.clone(), None).await {
+    let download = match HttpDownload::create(
+        url,
+        download_directory,
+        file_name,
+        state.client.clone(),
+        None,
+    )
+    .await
+    {
         Ok(d) => d,
         Err(e) => {
             let error = format!("Error creating download: {}", e);

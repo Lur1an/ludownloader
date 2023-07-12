@@ -19,6 +19,9 @@ pub trait DownloadUpdateBatchSubscriber {
     async fn update(&self, updates: &Vec<(Uuid, State)>);
 }
 
+// Fuck this type, later on just remove the wrapping Arc<Mutex> and instead create a simple channel
+// over which new subscribers are sent, whenever the publisher is ready to publish a new batch he
+// first checks the channel for new subscribers which will be added to the internal vector.
 pub type Subscribers = Arc<Mutex<Vec<Arc<dyn DownloadUpdateBatchSubscriber + Send + Sync>>>>;
 
 /// Initializes structs needed for the httpdownload module
@@ -55,9 +58,8 @@ mod test {
                 }),
             )
             .await;
-
-        manager.start(id).await?;
-        manager.stop(id).await?;
+        manager.start(&id).await?;
+        manager.stop(&id).await?;
         let state = observer.read_state().await;
         let download_state = state.get(&id).unwrap();
         assert!(matches!(download_state, State::Paused { .. }));

@@ -55,7 +55,8 @@ pub enum UpdateType {
 pub struct HttpDownload {
     pub url: Url,
     pub id: uuid::Uuid,
-    pub file_path: PathBuf,
+    pub directory: PathBuf,
+    pub filename: String,
     pub config: HttpDownloadConfig,
     pub content_length: u64,
     pub supports_byte_ranges: bool,
@@ -74,8 +75,12 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send()
             .await?;
-        let file_handler = File::create(&self.file_path).await?;
+        let file_handler = File::create(self.file_path()).await?;
         self.progress(resp, file_handler, stop_ch, update_ch, 0).await
+    }
+
+    pub fn file_path(&self) -> PathBuf {
+        self.directory.join(&self.filename)
     }
 
     pub async fn resume(
@@ -102,7 +107,7 @@ impl HttpDownload {
         let file_handler = OpenOptions::new()
             .write(true)
             .append(true)
-            .open(&self.file_path)
+            .open(self.file_path())
             .await?;
 
         let resp = self
@@ -117,7 +122,8 @@ impl HttpDownload {
 
     pub async fn create(
         url: Url,
-        file_path: PathBuf,
+        directory: PathBuf,
+        filename: String,
         client: Client,
         config: Option<HttpDownloadConfig>,
     ) -> Result<Self> {
@@ -149,7 +155,8 @@ impl HttpDownload {
         let download = HttpDownload {
             id,
             url,
-            file_path,
+            directory,
+            filename: filename.to_string(),
             config,
             client,
             supports_byte_ranges,
@@ -222,7 +229,7 @@ impl HttpDownload {
     }
 
     pub async fn get_bytes_on_disk(&self) -> u64 {
-        file_size(&self.file_path).await
+        file_size(&self.file_path()).await
     }
 }
 
@@ -231,7 +238,7 @@ impl From<&HttpDownload> for api::proto::DownloadMetadata {
         api::proto::DownloadMetadata {
             uuid: value.id.as_bytes().to_vec(),
             url: value.url.to_string(),
-            file_path: value.file_path.to_string_lossy().to_string(),
+            file_path: value.file_path().to_string_lossy().to_string(),
             content_length: value.content_length,
         }
     }
@@ -258,9 +265,10 @@ mod test {
         // given
         let url_str = TEST_DOWNLOAD_URL;
         let url = Url::parse(url_str)?;
-        let file_path = PathBuf::from(parse_filename(&url).unwrap());
+        let filename = parse_filename(&url).unwrap().to_string();
+        let directory = PathBuf::new();
         // when creating a download, server data is present in the download struct
-        let download = HttpDownload::create(url, file_path, Client::new(), None).await?;
+        let download = HttpDownload::create(url, directory, filename, Client::new(), None).await?;
         // then
         assert!(
             download.supports_byte_ranges,
@@ -280,7 +288,7 @@ mod test {
         // then
         assert_eq!(
             download.content_length,
-            file_size(&download.file_path).await,
+            file_size(&download.file_path()).await,
             "File size should be equal to content_length"
         );
         assert_eq!(
@@ -306,7 +314,7 @@ mod test {
         // then
         assert_eq!(
             download.content_length,
-            file_size(&download.file_path).await,
+            file_size(&download.file_path()).await,
             "File size should be equal to content_length"
         );
         assert_eq!(

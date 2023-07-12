@@ -65,8 +65,8 @@ impl Inner {
         result
     }
 
-    pub async fn edit(&mut self, id: Uuid) -> Result<MutexGuard<HttpDownload>> {
-        if let Some(item) = self.items.get_mut(&id) {
+    pub async fn edit(&mut self, id: &Uuid) -> Result<MutexGuard<HttpDownload>> {
+        if let Some(item) = self.items.get_mut(id) {
             let guard = item.download.try_lock()?;
             Ok(guard)
         } else {
@@ -74,9 +74,12 @@ impl Inner {
         }
     }
 
-    pub fn start(&mut self, id: Uuid) -> Result<()> {
-        if let Some(item) = self.items.get_mut(&id) {
+    pub fn start(&mut self, id: &Uuid) -> Result<()> {
+        if let Some(item) = self.items.get_mut(id) {
             let update_ch = self.update_ch.clone();
+            if item.is_locked() {
+                return Err(Error::Access("Download is already locked, probably running already or locked up by pending operation!".to_owned()));
+            }
             item.run(update_ch, false);
             Ok(())
         } else {
@@ -84,13 +87,18 @@ impl Inner {
         }
     }
 
-    pub async fn stop(&mut self, id: Uuid) -> Result<()> {
+    pub fn stop(&mut self, id: &Uuid) -> Result<()> {
         log::info!("Stop action requested for download: {}", id);
-        if let Some(mut item) = self.items.remove(&id) {
+        if let Some(item) = self.items.get_mut(id) {
             log::info!("Stopping download {}", id);
-            item.stop().await
+            item.stop()
         } else {
             Err(Error::Access(format!("Download with id {} not found", id)))
         }
+    }
+
+    pub fn remove(&mut self, id: &Uuid) -> Option<DownloaderItem> {
+        log::info!("Removing download: {}", id);
+        self.items.remove(id)
     }
 }
