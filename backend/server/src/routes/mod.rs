@@ -1,23 +1,18 @@
-use std::sync::Arc;
-
-use api::proto::{self, create_download_response::Response, DownloadPaused};
+use api::proto::{self, DownloadPaused};
+use async_trait::async_trait;
 use axum::{
-    extract::State,
+    extract::{FromRequestParts, Path, Query, State},
     response::IntoResponse,
     routing::{delete, get, post},
-    Json, Router,
+    Router,
 };
 use downloader::{
-    httpdownload::{
-        download::HttpDownload,
-        manager::{self, DownloadManager},
-        observer::DownloadObserver,
-    },
-    util::parse_filename,
+    httpdownload::{download::HttpDownload, manager::DownloadManager, observer::DownloadObserver},
+    util::{file_size, parse_filename},
 };
 use prost::Message;
 use reqwest::{Client, StatusCode, Url};
-use serde_json::json;
+use uuid::Uuid;
 
 use crate::settings;
 
@@ -30,20 +25,50 @@ pub struct ApplicationState {
     pub client: Client,
 }
 
-async fn delete_download() {
-    todo!()
+async fn delete_download(
+    id: Path<Uuid>,
+    delete_file: Query<bool>,
+    state: State<ApplicationState>,
+) -> impl IntoResponse {
+    let resp = match state.manager.delete(&id, *delete_file).await {
+        Ok(_) => (StatusCode::OK, id.to_string()),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            format!("Couldn't delete Download: {}", e),
+        ),
+    };
+    resp
 }
 
-async fn pause_download() {
-    todo!()
+async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
+    let resp = match state.manager.stop(&id).await {
+        Ok(_) => (StatusCode::OK, "Success".to_string()),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            format!("Couldn't stop Download: {}", e),
+        ),
+    };
+    resp
 }
 
-async fn start_download() {
-    todo!()
+async fn start_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
+    match state.manager.start(&id).await {
+        Ok(_) => (StatusCode::OK, "Success".to_string()),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            format!("Couldn't start Download: {}", e),
+        ),
+    }
 }
 
-async fn resume_download() {
-    todo!()
+async fn resume_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
+    match state.manager.resume(&id).await {
+        Ok(_) => (StatusCode::OK, "Success".to_string()),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            format!("Couldn't resume Download: {}", e),
+        ),
+    }
 }
 
 async fn get_metadata(state: State<ApplicationState>) -> impl IntoResponse {
@@ -95,22 +120,31 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
     };
     let metadata = download.get_metadata();
     let message = prost::Message::encode_to_vec(&metadata);
+    let bytes_downloaded = file_size(&download.file_path()).await;
     let id = state.manager.add(download).await;
     state
         .observer
         .track(
             id,
-            proto::download_state::State::Paused(DownloadPaused {
-                bytes_downloaded: 0,
-            }),
+            proto::download_state::State::Paused(DownloadPaused { bytes_downloaded }),
         )
         .await;
     (StatusCode::CREATED, message)
 }
 
+async fn start_all_downloads(state: State<ApplicationState>) {
+    state.manager.start_all().await;
+}
+
+async fn stop_all_downloads(state: State<ApplicationState>) {
+    state.manager.stop_all().await;
+}
+
 pub fn routes() -> Router<ApplicationState> {
     let app_router = Router::new()
         .route("/", post(create_download))
+        .route("/start_all", get(start_all_downloads))
+        .route("/stop_all", get(stop_all_downloads))
         .route("/metadata", get(get_metadata))
         .route("/state", get(get_state))
         .route("/:id", delete(delete_download))

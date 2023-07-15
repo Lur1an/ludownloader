@@ -1,14 +1,13 @@
-use std::io::Read;
+use std::{io::Read, time::Duration};
 
-use api::proto::{
-    create_download_response::Response, DownloadMetadata, DownloadPaused, MetadataBatch, StateBatch,
-};
+use api::proto::{DownloadMetadata, DownloadPaused, MetadataBatch, StateBatch};
 use async_trait::async_trait;
 use prost::Message;
 use reqwest::{StatusCode, Url};
 use server::launch_app;
 use test_context::{test_context, AsyncTestContext};
 use test_log::test;
+use uuid::Uuid;
 
 struct IntegrationTestContext {
     pub client: reqwest::Client,
@@ -30,7 +29,7 @@ impl AsyncTestContext for IntegrationTestContext {
 
 #[test_context(IntegrationTestContext)]
 #[test(tokio::test)]
-async fn test_create_download(ctx: &mut IntegrationTestContext) {
+async fn test_download_crud(ctx: &mut IntegrationTestContext) {
     let body = "https://speed.hetzner.de/1GB.bin".to_owned();
     let resp = ctx
         .client
@@ -68,7 +67,7 @@ async fn test_create_download(ctx: &mut IntegrationTestContext) {
 
 #[test_context(IntegrationTestContext)]
 #[test(tokio::test)]
-async fn test_multiple_downloads_crud(ctx: &mut IntegrationTestContext) {
+async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
     let download_url = "https://speed.hetzner.de/1GB.bin";
     for _ in 0..20 {
         let body = download_url.to_owned();
@@ -111,4 +110,31 @@ async fn test_multiple_downloads_crud(ctx: &mut IntegrationTestContext) {
             })
         ));
     }
+}
+#[test_context(IntegrationTestContext)]
+#[test(tokio::test)]
+async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
+    let body = "https://speed.hetzner.de/1GB.bin".to_owned();
+    let resp = ctx
+        .client
+        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CREATED);
+    let metadata: DownloadMetadata = Message::decode(resp.bytes().await.unwrap()).unwrap();
+    let id: Uuid = metadata.id();
+    let resp = ctx
+        .client
+        .get(
+            ctx.server_url
+                .join(format!("/api/v1/httpdownload/{}/start", id).as_ref())
+                .unwrap(),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    tokio::time::sleep(Duration::from_secs(10)).await;
 }

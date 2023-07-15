@@ -1,15 +1,14 @@
+use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use reqwest::{header, Client, Url};
 use std::error::Error;
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
+use test_context::AsyncTestContext;
 
 use crate::httpdownload::download::HttpDownload;
 
-/**
- * Tries to extract file size in bytes from given Path
- * If the Path is wrong or the metadata read operation fails the function returns 0
- */
+/// Extracts filesize from path, if file does not exist or read fails the function returns 0
 pub async fn file_size(fpath: &Path) -> u64 {
     match tokio::fs::metadata(fpath).await {
         Ok(metadata) => metadata.len(),

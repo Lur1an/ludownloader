@@ -21,6 +21,7 @@ uuid = { version = "1.3.3", features = ["v4", "fast-rng", "macro-diagnostics"] }
 tokio = { version = "1.21.2", features = ["full"] }
 tempfile = "3.3.0"
 test-log = "0.2.11"
+test-context = "0.1.4"
 
 
 [dev-dependencies]

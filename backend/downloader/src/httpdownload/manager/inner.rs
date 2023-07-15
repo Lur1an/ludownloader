@@ -57,12 +57,32 @@ impl Inner {
         id
     }
 
-    pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
+    pub fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let mut result = Vec::with_capacity(self.items.len());
         for item in self.items.values() {
             result.push(item.metadata.clone());
         }
         result
+    }
+
+    pub fn start_all(&mut self) {
+        log::info!("Start/Resume all {} downloads", self.items.len());
+        for (id, item) in self.items.iter_mut() {
+            if item.is_locked() {
+                log::info!("HttpDownload: {} is locked, skipping...", id);
+                continue;
+            }
+            log::info!("Starting download: {}", id);
+            item.run(self.update_ch.clone(), true);
+        }
+    }
+
+    pub fn stop_all(&mut self) {
+        log::info!("Stopping all {} downloads", self.items.len());
+        for (id, item) in self.items.iter_mut() {
+            log::info!("Stopping download: {}", id);
+            let _ = item.stop();
+        }
     }
 
     pub async fn edit(&mut self, id: &Uuid) -> Result<MutexGuard<HttpDownload>> {
@@ -74,13 +94,13 @@ impl Inner {
         }
     }
 
-    pub fn start(&mut self, id: &Uuid) -> Result<()> {
+    pub fn run(&mut self, id: &Uuid, resume: bool) -> Result<()> {
         if let Some(item) = self.items.get_mut(id) {
             let update_ch = self.update_ch.clone();
             if item.is_locked() {
                 return Err(Error::Access("Download is already locked, probably running already or locked up by pending operation!".to_owned()));
             }
-            item.run(update_ch, false);
+            item.run(update_ch, resume);
             Ok(())
         } else {
             Err(Error::Access(format!("Download with id {} not found", id)))

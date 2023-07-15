@@ -89,6 +89,15 @@ async fn load_settings(p: &PathBuf) -> Settings {
             Ok(file) => {
                 let settings: Settings = serde_yaml::from_str(&file).unwrap();
                 log::info!("Settings loaded: {:?}", settings);
+                if !tokio::fs::try_exists(&settings.default_download_dir)
+                    .await
+                    .unwrap()
+                {
+                    log::info!("default download directory pointed at by settings does not exist, creating...");
+                    tokio::fs::create_dir_all(&settings.default_download_dir)
+                        .await
+                        .unwrap();
+                }
                 return settings;
             }
             Err(e) => {

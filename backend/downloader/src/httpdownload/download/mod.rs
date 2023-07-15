@@ -75,6 +75,7 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send()
             .await?;
+        log::info!("Starting new download for url {}, creating file at {:?}", self.url, self.file_path());
         let file_handler = File::create(self.file_path()).await?;
         self.progress(resp, file_handler, stop_ch, update_ch, 0).await
     }

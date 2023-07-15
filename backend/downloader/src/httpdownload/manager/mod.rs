@@ -53,7 +53,12 @@ impl DownloadManager {
 
     pub async fn start(&self, id: &Uuid) -> Result<()> {
         let mut inner = self.inner.write().await;
-        inner.start(id)
+        inner.run(id, false)
+    }
+
+    pub async fn resume(&self, id: &Uuid) -> Result<()> {
+        let mut inner = self.inner.write().await;
+        inner.run(id, true)
     }
 
     pub async fn stop(&self, id: &Uuid) -> Result<()> {
@@ -61,10 +66,20 @@ impl DownloadManager {
         inner.stop(id)
     }
 
+    pub async fn start_all(&self) {
+        let mut inner = self.inner.write().await;
+        inner.start_all()
+    }
+
+    pub async fn stop_all(&self) {
+        let mut inner = self.inner.write().await;
+        inner.stop_all()
+    }
+
     pub async fn get_metadata_all(&self) -> MetadataBatch {
         let inner = self.inner.read().await;
         MetadataBatch {
-            value: inner.get_metadata_all().await,
+            value: inner.get_metadata_all(),
         }
     }
 
@@ -76,6 +91,7 @@ impl DownloadManager {
 
     pub async fn delete(&self, id: &Uuid, delete_file: bool) -> Result<()> {
         let mut inner = self.inner.write().await;
+        // Download id does not exist case
         if let Err(Error::Access(e)) = inner.stop(id) {
             return Err(Error::Access(e));
         }
@@ -91,8 +107,6 @@ impl DownloadManager {
                 };
             }
         };
-        // This is not tested yet!
-        todo!();
         Ok(())
     }
 }
@@ -110,20 +124,32 @@ mod test {
     type Test<T> = std::result::Result<T, Box<dyn Error>>;
 
     #[test(tokio::test)]
-    async fn start_and_stop_download() -> Test<()> {
+    async fn start_stop_delete_download() -> Test<()> {
         let manager = DownloadManager::default();
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let download_path = download.file_path();
         let id = manager.add(download).await;
         manager.start(&id).await?;
+        // check metadata as expected
+        let metadata = manager.get_metadata_all().await.value;
+        assert_eq!(metadata.len(), 1, "There should be one download");
+        let metadata = &metadata[0];
+        assert_eq!(Uuid::from_slice(&metadata.uuid).unwrap(), id);
         time::sleep(time::Duration::from_secs(1)).await;
         manager.stop(&id).await?;
+        // check size of downloaded file
         let downloaded_bytes = file_size(&download_path).await;
         assert_ne!(
             downloaded_bytes, 0,
             "Downloaded bytes should be greater than 0"
         );
-
+        // test deletion
+        manager.delete(&id, true).await?;
+        let downloaded_bytes = file_size(&download_path).await;
+        assert_eq!(
+            downloaded_bytes, 0,
+            "Download file should not exist on disk anymore"
+        );
         Ok(())
     }
 }
