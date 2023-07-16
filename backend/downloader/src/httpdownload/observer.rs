@@ -53,9 +53,12 @@ impl DownloadObserver {
         StateBatch { value }
     }
 
-    pub async fn get_state(&self, id: Uuid) -> Option<State> {
+    pub async fn get_state(&self, id: &Uuid) -> DownloadState {
         let guard = self.state.read().await;
-        guard.get(&id).cloned()
+        return DownloadState {
+            uuid: id.as_bytes().to_vec(),
+            state: guard.get(id).cloned(),
+        };
     }
 
     pub async fn track(&self, id: Uuid, state: State) {

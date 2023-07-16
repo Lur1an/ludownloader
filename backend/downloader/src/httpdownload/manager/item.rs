@@ -43,8 +43,10 @@ impl DownloaderItem {
 
             let update_ch_cl = update_ch.clone();
             let download_result = if resume {
+                log::info!("Resuming download: {}", download.id);
                 download.resume(rx, update_ch).await
             } else {
+                log::info!("Starting download: {}", download.id);
                 download.start(rx, update_ch).await
             };
 

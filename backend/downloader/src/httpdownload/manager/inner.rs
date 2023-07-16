@@ -57,6 +57,17 @@ impl Inner {
         id
     }
 
+    pub fn get_metadata(&self, id: &Uuid) -> Result<DownloadMetadata> {
+        if let Some(item) = self.items.get(id) {
+            Ok(item.metadata.clone())
+        } else {
+            Err(Error::Access(format!(
+                "Download with id {} does not exist",
+                id
+            )))
+        }
+    }
+
     pub fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let mut result = Vec::with_capacity(self.items.len());
         for item in self.items.values() {

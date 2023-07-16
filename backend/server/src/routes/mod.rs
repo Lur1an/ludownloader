@@ -97,12 +97,19 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
         .await
         .default_download_dir
         .clone();
-    let file_name = if let Some(file_name) = parse_filename(&url) {
+    let mut file_name = if let Some(file_name) = parse_filename(&url) {
         file_name.to_owned()
     } else {
         let error = "Couldn't parse filename from url";
         return (StatusCode::BAD_REQUEST, error.to_owned().into_bytes());
     };
+    if tokio::fs::try_exists(download_directory.join(&file_name))
+        .await
+        .unwrap_or(false)
+    {
+        file_name = format!("{}-{}", Uuid::new_v4(), file_name);
+    }
+
     let download = match HttpDownload::create(
         url,
         download_directory,
@@ -132,6 +139,23 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
     (StatusCode::CREATED, message)
 }
 
+async fn get_download(id: Path<Uuid>, state: State<ApplicationState>) -> impl IntoResponse {
+    let metadata = match state.manager.get_metadata(&id).await {
+        Ok(value) => value,
+        Err(e) => {
+            let error = format!("Error getting download_metadata: {}", e);
+            return (StatusCode::BAD_REQUEST, error.into_bytes());
+        }
+    };
+    let state = state.observer.get_state(&id).await;
+    let message = proto::DownloadData {
+        metadata: Some(metadata),
+        state: Some(state),
+    };
+    let message = Message::encode_to_vec(&message);
+    (StatusCode::OK, message)
+}
+
 async fn start_all_downloads(state: State<ApplicationState>) {
     state.manager.start_all().await;
 }
@@ -147,7 +171,7 @@ pub fn routes() -> Router<ApplicationState> {
         .route("/stop_all", get(stop_all_downloads))
         .route("/metadata", get(get_metadata))
         .route("/state", get(get_state))
-        .route("/:id", delete(delete_download))
+        .route("/:id", delete(delete_download).get(get_download))
         .route("/:id/start", get(start_download))
         .route("/:id/resume", get(resume_download))
         .route("/:id/pause", get(pause_download));

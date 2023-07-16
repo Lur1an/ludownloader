@@ -1,9 +1,12 @@
-use std::{io::Read, time::Duration};
+use std::{io::Read, panic::update_hook, time::Duration};
 
-use api::proto::{DownloadMetadata, DownloadPaused, MetadataBatch, StateBatch};
+use api::proto::{
+    download_state::State, DownloadComplete, DownloadData, DownloadMetadata, DownloadPaused,
+    DownloadRunning, MetadataBatch, StateBatch,
+};
 use async_trait::async_trait;
 use prost::Message;
-use reqwest::{StatusCode, Url};
+use reqwest::{Client, StatusCode, Url};
 use server::launch_app;
 use test_context::{test_context, AsyncTestContext};
 use test_log::test;
@@ -111,10 +114,12 @@ async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
         ));
     }
 }
+
 #[test_context(IntegrationTestContext)]
 #[test(tokio::test)]
 async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
-    let body = "https://speed.hetzner.de/1GB.bin".to_owned();
+    let body =
+        "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb".to_owned();
     let resp = ctx
         .client
         .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
@@ -136,5 +141,24 @@ async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    tokio::time::sleep(Duration::from_secs(10)).await;
+
+    let update_endpoint = ctx
+        .server_url
+        .join(format!("/api/v1/httpdownload/{}", id).as_ref())
+        .unwrap();
+    async fn new_state(client: &Client, endpoint: &Url) -> State {
+        let resp = client.get(endpoint.clone()).send().await.unwrap();
+        let data: DownloadData = Message::decode(resp.bytes().await.unwrap()).unwrap();
+        data.state.unwrap().state.unwrap()
+    }
+    let mut state = new_state(&ctx.client, &update_endpoint).await;
+    while matches!(
+        state,
+        State::Running(DownloadRunning { .. }) | State::Paused(DownloadPaused { .. })
+    ) {
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        state = new_state(&ctx.client, &update_endpoint).await;
+    }
+    state = new_state(&ctx.client, &update_endpoint).await;
+    assert!(matches!(state, State::Complete(DownloadComplete {})));
 }

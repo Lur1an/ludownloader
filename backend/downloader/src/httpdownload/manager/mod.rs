@@ -76,6 +76,11 @@ impl DownloadManager {
         inner.stop_all()
     }
 
+    pub async fn get_metadata(&self, id: &Uuid) -> Result<DownloadMetadata> {
+        let inner = self.inner.read().await;
+        inner.get_metadata(id)
+    }
+
     pub async fn get_metadata_all(&self) -> MetadataBatch {
         let inner = self.inner.read().await;
         MetadataBatch {
