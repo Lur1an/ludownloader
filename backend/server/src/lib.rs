@@ -1,3 +1,4 @@
+pub mod api;
 mod app;
 mod routes;
 mod settings;

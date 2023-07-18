@@ -1,9 +1,9 @@
 pub mod config;
 
-use async_trait::async_trait;
 use futures_util::StreamExt;
 use reqwest::header::RANGE;
 use reqwest::{Client, Response, Url};
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
@@ -13,6 +13,8 @@ use tokio::sync::{mpsc, oneshot};
 use crate::util::{file_size, supports_byte_ranges, mb, HALF_SECOND};
 
 use self::config::HttpDownloadConfig;
+
+use super::DownloadMetadata;
     
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -32,24 +34,26 @@ pub enum Error {
     StreamEndedBeforeCompletion(u64)
 }
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug)]
-pub struct DownloadUpdate {
-    pub id: uuid::Uuid,
-    pub update_type: UpdateType,
-}
-
-#[derive(Debug)]
-pub enum UpdateType {
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum State {
     Complete,
     Paused(u64),
     Running {
         bytes_downloaded: u64,
         bytes_per_second: u64,
     },
-    Error(Error)
+    Error(String),
 }
+
+
+pub type Result<T> = std::result::Result<T, Error>;
+
+#[derive(Debug)]
+pub struct DownloadUpdate {
+    pub id: uuid::Uuid,
+    pub state: State,
+}
+
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
@@ -187,7 +191,7 @@ impl HttpDownload {
                 let _ = update_ch.try_send(
                     DownloadUpdate {
                         id: self.id,
-                        update_type: UpdateType::Running {
+                        state: State::Running {
                             bytes_downloaded: downloaded_bytes,
                             bytes_per_second: last_bytes_downloaded / last_update.elapsed().as_millis() as u64 * 1000,
                         },
@@ -225,23 +229,12 @@ impl HttpDownload {
         Ok(downloaded_bytes)
     }
 
-    pub fn get_metadata(&self) -> api::proto::DownloadMetadata {
-        self.into()
+    pub fn get_metadata(&self) -> DownloadMetadata {
+        DownloadMetadata { id: self.id, url: self.url.to_string(), file_path: self.file_path(), content_length: self.content_length }
     }
 
     pub async fn get_bytes_on_disk(&self) -> u64 {
         file_size(&self.file_path()).await
-    }
-}
-
-impl From<&HttpDownload> for api::proto::DownloadMetadata {
-    fn from(value: &HttpDownload) -> Self {
-        api::proto::DownloadMetadata {
-            uuid: value.id.as_bytes().to_vec(),
-            url: value.url.to_string(),
-            file_path: value.file_path().to_string_lossy().to_string(),
-            content_length: value.content_length,
-        }
     }
 }
 

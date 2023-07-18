@@ -1,20 +1,22 @@
-use api::proto::{self, DownloadPaused};
 use async_trait::async_trait;
 use axum::{
+    body::{Body, Empty, HttpBody},
     extract::{FromRequestParts, Path, Query, State},
-    response::IntoResponse,
+    response::{IntoResponse, Result},
     routing::{delete, get, post},
-    Router,
+    Json, Router,
 };
+use downloader::httpdownload::{download, DownloadMetadata};
 use downloader::{
     httpdownload::{download::HttpDownload, manager::DownloadManager, observer::DownloadObserver},
     util::{file_size, parse_filename},
 };
-use prost::Message;
 use reqwest::{Client, StatusCode, Url};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::settings;
+use crate::{api::DownloadData, settings};
 
 #[derive(Clone)]
 pub struct ApplicationState {
@@ -25,16 +27,20 @@ pub struct ApplicationState {
     pub client: Client,
 }
 
+fn json_error(message: String) -> Json<Value> {
+    Json(json!({ "error": message }))
+}
+
 async fn delete_download(
     id: Path<Uuid>,
     delete_file: Query<bool>,
     state: State<ApplicationState>,
 ) -> impl IntoResponse {
     let resp = match state.manager.delete(&id, *delete_file).await {
-        Ok(_) => (StatusCode::OK, id.to_string()),
+        Ok(_) => (StatusCode::OK, Json(json!({"id": id.to_string()}))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            format!("Couldn't delete Download: {}", e),
+            json_error(format!("Couldn't delete Download: {}", e)),
         ),
     };
     resp
@@ -42,10 +48,10 @@ async fn delete_download(
 
 async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
     let resp = match state.manager.stop(&id).await {
-        Ok(_) => (StatusCode::OK, "Success".to_string()),
+        Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            format!("Couldn't stop Download: {}", e),
+            json_error(format!("Couldn't stop Download: {}", e)),
         ),
     };
     resp
@@ -53,42 +59,43 @@ async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl 
 
 async fn start_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
     match state.manager.start(&id).await {
-        Ok(_) => (StatusCode::OK, "Success".to_string()),
+        Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            format!("Couldn't start Download: {}", e),
+            json_error(format!("Couldn't start Download: {}", e)),
         ),
     }
 }
 
 async fn resume_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
     match state.manager.resume(&id).await {
-        Ok(_) => (StatusCode::OK, "Success".to_string()),
+        Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            format!("Couldn't resume Download: {}", e),
+            json_error(format!("Couldn't resume Download: {}", e)),
         ),
     }
 }
 
 async fn get_metadata(state: State<ApplicationState>) -> impl IntoResponse {
     let data = state.manager.get_metadata_all().await;
-    let message = Message::encode_to_vec(&data);
-    message
+    Json(data)
 }
 
 async fn get_state(state: State<ApplicationState>) -> impl IntoResponse {
     let data = state.observer.get_state_all().await;
-    let message = Message::encode_to_vec(&data);
-    message
+    Json(data)
 }
 
-async fn create_download(state: State<ApplicationState>, url: String) -> impl IntoResponse {
+async fn create_download(
+    state: State<ApplicationState>,
+    url: String,
+) -> Result<(StatusCode, Json<DownloadMetadata>), (StatusCode, Json<Value>)> {
     let url = match Url::parse(&url) {
-        Ok(value) => value,
+        Ok(u) => u,
         Err(e) => {
-            let error = format!("Invalid URL: {}", e);
-            return (StatusCode::BAD_REQUEST, error.into_bytes());
+            let error = format!("Invalid URL, couldn't parse: {}", e);
+            return Err((StatusCode::BAD_REQUEST, json_error(error)));
         }
     };
     let download_directory = state
@@ -101,8 +108,9 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
         file_name.to_owned()
     } else {
         let error = "Couldn't parse filename from url";
-        return (StatusCode::BAD_REQUEST, error.to_owned().into_bytes());
+        return Err((StatusCode::BAD_REQUEST, json_error(error.to_owned())));
     };
+
     if tokio::fs::try_exists(download_directory.join(&file_name))
         .await
         .unwrap_or(false)
@@ -122,38 +130,39 @@ async fn create_download(state: State<ApplicationState>, url: String) -> impl In
         Ok(d) => d,
         Err(e) => {
             let error = format!("Error creating download: {}", e);
-            return (StatusCode::INTERNAL_SERVER_ERROR, error.into_bytes());
+            return Err((StatusCode::INTERNAL_SERVER_ERROR, json_error(error)));
         }
     };
     let metadata = download.get_metadata();
-    let message = prost::Message::encode_to_vec(&metadata);
     let bytes_downloaded = file_size(&download.file_path()).await;
     let id = state.manager.add(download).await;
     state
         .observer
-        .track(
-            id,
-            proto::download_state::State::Paused(DownloadPaused { bytes_downloaded }),
-        )
+        .track(id, download::State::Paused(bytes_downloaded))
         .await;
-    (StatusCode::CREATED, message)
+    Ok((StatusCode::CREATED, Json(metadata)))
 }
 
-async fn get_download(id: Path<Uuid>, state: State<ApplicationState>) -> impl IntoResponse {
+async fn get_download(
+    id: Path<Uuid>,
+    state: State<ApplicationState>,
+) -> Result<(StatusCode, Json<DownloadData>), (StatusCode, Json<Value>)> {
     let metadata = match state.manager.get_metadata(&id).await {
         Ok(value) => value,
         Err(e) => {
             let error = format!("Error getting download_metadata: {}", e);
-            return (StatusCode::BAD_REQUEST, error.into_bytes());
+            return Err((StatusCode::BAD_REQUEST, json_error(error)));
         }
     };
-    let state = state.observer.get_state(&id).await;
-    let message = proto::DownloadData {
-        metadata: Some(metadata),
-        state: Some(state),
+    let state = match state.observer.get_state(&id).await {
+        Some(v) => v,
+        None => {
+            let error = format!("Error getting download_state: {}", *id);
+            return Err((StatusCode::BAD_REQUEST, json_error(error)));
+        }
     };
-    let message = Message::encode_to_vec(&message);
-    (StatusCode::OK, message)
+    let message = Json(DownloadData { state, metadata });
+    Ok((StatusCode::OK, message))
 }
 
 async fn start_all_downloads(state: State<ApplicationState>) {

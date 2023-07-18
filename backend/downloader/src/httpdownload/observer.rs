@@ -1,15 +1,8 @@
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
-use api::proto::{
-    download_state::State, DownloadComplete, DownloadPaused, DownloadRunning, DownloadState,
-    StateBatch,
-};
 use async_trait::async_trait;
 use tokio::{
-    sync::{Mutex, MutexGuard, RwLock, RwLockReadGuard},
+    sync::{Mutex, RwLock, RwLockReadGuard},
     time::Instant,
 };
 use uuid::Uuid;
@@ -17,7 +10,7 @@ use uuid::Uuid;
 use crate::util::HALF_SECOND;
 
 use super::{
-    download::{DownloadUpdate, UpdateType},
+    download::{self, DownloadUpdate, State},
     manager::UpdateConsumer,
     DownloadUpdateBatchSubscriber, Subscribers,
 };
@@ -28,7 +21,7 @@ use super::{
 /// threading internally and be safe to Clone and pass around.
 #[derive(Clone)]
 pub struct DownloadObserver {
-    pub state: Arc<RwLock<HashMap<Uuid, State>>>,
+    pub state: Arc<RwLock<HashMap<Uuid, download::State>>>,
 }
 
 impl DownloadObserver {
@@ -37,31 +30,24 @@ impl DownloadObserver {
             state: Arc::new(RwLock::new(HashMap::new())),
         }
     }
-    pub async fn read_state(&self) -> RwLockReadGuard<HashMap<Uuid, State>> {
+    pub async fn read_state(&self) -> RwLockReadGuard<HashMap<Uuid, download::State>> {
         self.state.read().await
     }
 
-    pub async fn get_state_all(&self) -> StateBatch {
+    pub async fn get_state_all(&self) -> Vec<(Uuid, download::State)> {
         let guard = self.state.read().await;
-        let value = guard
+        guard
             .iter()
-            .map(|(id, state)| DownloadState {
-                uuid: id.as_bytes().to_vec(),
-                state: Some(state.clone()),
-            })
-            .collect::<Vec<_>>();
-        StateBatch { value }
+            .map(|(id, state)| (*id, state.clone()))
+            .collect()
     }
 
-    pub async fn get_state(&self, id: &Uuid) -> DownloadState {
+    pub async fn get_state(&self, id: &Uuid) -> Option<State> {
         let guard = self.state.read().await;
-        return DownloadState {
-            uuid: id.as_bytes().to_vec(),
-            state: guard.get(id).cloned(),
-        };
+        guard.get(id).cloned()
     }
 
-    pub async fn track(&self, id: Uuid, state: State) {
+    pub async fn track(&self, id: Uuid, state: download::State) {
         let mut guard = self.state.write().await;
         guard.insert(id, state);
     }
@@ -69,7 +55,7 @@ impl DownloadObserver {
 
 #[async_trait]
 impl DownloadUpdateBatchSubscriber for DownloadObserver {
-    async fn update(&self, updates: &Vec<(Uuid, State)>) {
+    async fn update(&self, updates: &Vec<(Uuid, download::State)>) {
         log::info!("Updating inner state for DownloadObserver, acquiring lock...");
         let mut guard = self.state.write().await;
         log::info!("Lock acquired, updating {} entries...", updates.len());
@@ -117,39 +103,23 @@ impl DownloadUpdatePublisher {
     }
 }
 
-impl From<&DownloadUpdate> for State {
-    fn from(value: &DownloadUpdate) -> Self {
-        match &value.update_type {
-            UpdateType::Complete => State::Complete(DownloadComplete {}),
-            UpdateType::Paused(bytes_downloaded) => State::Paused(DownloadPaused {
-                bytes_downloaded: *bytes_downloaded,
-            }),
-            UpdateType::Running {
-                bytes_downloaded,
-                bytes_per_second,
-            } => State::Running(DownloadRunning {
-                bytes_downloaded: *bytes_downloaded,
-                bytes_per_second: *bytes_per_second,
-            }),
-            UpdateType::Error(e) => match e {
-                _ => State::Error(e.to_string()),
-            },
-        }
-    }
-}
-
 impl UpdateConsumer for DownloadUpdatePublisher {
     fn consume(&mut self, update: DownloadUpdate) {
         let flush = self.last_flush.elapsed() > HALF_SECOND
-            && !matches!(update.update_type, UpdateType::Running { .. });
-        let state = State::from(&update);
+            && !matches!(update.state, State::Running { .. });
+        let state = update.state;
         self.cache.insert(update.id, state);
         // If more than HALF_SECOND has elapsed or the download triggered an event
         // The cached state is flushed to all subscribers, this operation shouldn't block the
         // thread that called consume for too long (just the time to create an update array, wrap
         // it in Arc and spawn the tokio task).
         if flush {
-            let updates = Arc::new(self.cache.drain().collect::<Vec<_>>());
+            let updates = Arc::new(
+                self.cache
+                    .drain()
+                    .map(|(id, state)| (id, state.into()))
+                    .collect::<Vec<(Uuid, download::State)>>(),
+            );
             let subscribers = self.subscribers.clone();
             tokio::task::spawn(async move {
                 log::info!(

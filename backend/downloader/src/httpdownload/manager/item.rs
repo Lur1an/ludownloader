@@ -1,7 +1,7 @@
 use super::download;
 use super::download::{DownloadUpdate, HttpDownload};
 use crate::httpdownload::manager::{Error, Result};
-use api::proto::DownloadMetadata;
+use crate::httpdownload::DownloadMetadata;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -52,15 +52,15 @@ impl DownloaderItem {
 
             match download_result {
                 Ok(downloaded_bytes) => {
-                    let update_type = if downloaded_bytes == download.content_length {
-                        download::UpdateType::Complete
+                    let update = if downloaded_bytes == download.content_length {
+                        download::State::Complete
                     } else {
-                        download::UpdateType::Paused(downloaded_bytes)
+                        download::State::Paused(downloaded_bytes)
                     };
                     let _ = update_ch_cl
                         .send(DownloadUpdate {
                             id: download.id,
-                            update_type,
+                            state: update,
                         })
                         .await;
                 }
@@ -73,7 +73,7 @@ impl DownloaderItem {
                     let _ = update_ch_cl
                         .send(DownloadUpdate {
                             id: download.id,
-                            update_type: download::UpdateType::Error(e),
+                            state: download::State::Error(format!("{}", e)),
                         })
                         .await;
                 }

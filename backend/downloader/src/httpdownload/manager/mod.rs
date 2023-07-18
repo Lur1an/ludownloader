@@ -3,18 +3,18 @@ mod item;
 
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
-use api::proto::{DownloadMetadata, MetadataBatch};
-use std::ops::Deref;
 use std::sync::Arc;
-use thiserror::Error;
+use thiserror;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use self::inner::Inner;
 
+use super::DownloadMetadata;
+
 pub type Result<T> = std::result::Result<T, Error>;
 
-#[derive(Debug, Error)]
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("Error while trying to access download in map: {0}")]
     Access(String),
@@ -81,11 +81,9 @@ impl DownloadManager {
         inner.get_metadata(id)
     }
 
-    pub async fn get_metadata_all(&self) -> MetadataBatch {
+    pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let inner = self.inner.read().await;
-        MetadataBatch {
-            value: inner.get_metadata_all(),
-        }
+        inner.get_metadata_all()
     }
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
@@ -136,10 +134,10 @@ mod test {
         let id = manager.add(download).await;
         manager.start(&id).await?;
         // check metadata as expected
-        let metadata = manager.get_metadata_all().await.value;
+        let metadata = manager.get_metadata_all().await;
         assert_eq!(metadata.len(), 1, "There should be one download");
         let metadata = &metadata[0];
-        assert_eq!(Uuid::from_slice(&metadata.uuid).unwrap(), id);
+        assert_eq!(metadata.id, id);
         time::sleep(time::Duration::from_secs(1)).await;
         manager.stop(&id).await?;
         // check size of downloaded file

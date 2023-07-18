@@ -1,13 +1,10 @@
-use std::{io::Read, panic::update_hook, time::Duration};
+use std::time::Duration;
 
-use api::proto::{
-    download_state::State, DownloadComplete, DownloadData, DownloadMetadata, DownloadPaused,
-    DownloadRunning, MetadataBatch, StateBatch,
-};
 use async_trait::async_trait;
-use prost::Message;
+use downloader::httpdownload::{download, DownloadMetadata};
 use reqwest::{Client, StatusCode, Url};
-use server::launch_app;
+use serde::{Deserialize, Serialize};
+use server::{api::DownloadData, launch_app};
 use test_context::{test_context, AsyncTestContext};
 use test_log::test;
 use uuid::Uuid;
@@ -30,6 +27,11 @@ impl AsyncTestContext for IntegrationTestContext {
     }
 }
 
+#[derive(Deserialize, Serialize)]
+struct ApiError {
+    error: String,
+}
+
 #[test_context(IntegrationTestContext)]
 #[test(tokio::test)]
 async fn test_download_crud(ctx: &mut IntegrationTestContext) {
@@ -42,7 +44,7 @@ async fn test_download_crud(ctx: &mut IntegrationTestContext) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let metadata: DownloadMetadata = Message::decode(resp.bytes().await.unwrap()).unwrap();
+    let metadata: DownloadMetadata = resp.json().await.unwrap();
     assert_eq!(metadata.content_length, 1048576000);
     let incorrect_url = "hgesdg98wq19".to_owned();
     let resp = ctx
@@ -53,8 +55,8 @@ async fn test_download_crud(ctx: &mut IntegrationTestContext) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("Invalid URL"));
+    let body: ApiError = resp.json().await.unwrap();
+    assert!(body.error.contains("Invalid URL"));
     let fake_url = "http://ahahahahahaha_wtf.com/something.zip";
     let resp = ctx
         .client
@@ -64,8 +66,8 @@ async fn test_download_crud(ctx: &mut IntegrationTestContext) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-    let body = resp.text().await.unwrap();
-    assert!(body.contains("Error creating download"));
+    let body: ApiError = resp.json().await.unwrap();
+    assert!(body.error.contains("Error creating download"));
 }
 
 #[test_context(IntegrationTestContext)]
@@ -93,9 +95,9 @@ async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
         .send()
         .await
         .unwrap();
-    let metadata: MetadataBatch = Message::decode(resp.bytes().await.unwrap()).unwrap();
-    assert_eq!(metadata.value.len(), 20);
-    for metadata in metadata.value.iter() {
+    let metadata: Vec<DownloadMetadata> = resp.json().await.unwrap();
+    assert_eq!(metadata.len(), 20);
+    for metadata in metadata.iter() {
         assert_eq!(metadata.url, download_url);
     }
     let resp = ctx
@@ -104,14 +106,9 @@ async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
         .send()
         .await
         .unwrap();
-    let state: StateBatch = Message::decode(resp.bytes().await.unwrap()).unwrap();
-    for state in state.value.iter().cloned() {
-        assert!(matches!(
-            state.state.unwrap(),
-            api::proto::download_state::State::Paused(DownloadPaused {
-                bytes_downloaded: 0
-            })
-        ));
+    let states: Vec<(Uuid, download::State)> = resp.json().await.unwrap();
+    for (id, state) in states.into_iter() {
+        assert!(matches!(state, download::State::Paused(_)));
     }
 }
 
@@ -128,13 +125,12 @@ async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
-    let metadata: DownloadMetadata = Message::decode(resp.bytes().await.unwrap()).unwrap();
-    let id: Uuid = metadata.id();
+    let metadata: DownloadMetadata = resp.json().await.unwrap();
     let resp = ctx
         .client
         .get(
             ctx.server_url
-                .join(format!("/api/v1/httpdownload/{}/start", id).as_ref())
+                .join(format!("/api/v1/httpdownload/{}/start", metadata.id).as_ref())
                 .unwrap(),
         )
         .send()
@@ -144,21 +140,21 @@ async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
 
     let update_endpoint = ctx
         .server_url
-        .join(format!("/api/v1/httpdownload/{}", id).as_ref())
+        .join(format!("/api/v1/httpdownload/{}", metadata.id).as_ref())
         .unwrap();
-    async fn new_state(client: &Client, endpoint: &Url) -> State {
+    async fn new_state(client: &Client, endpoint: &Url) -> download::State {
         let resp = client.get(endpoint.clone()).send().await.unwrap();
-        let data: DownloadData = Message::decode(resp.bytes().await.unwrap()).unwrap();
-        data.state.unwrap().state.unwrap()
+        let data: DownloadData = resp.json().await.unwrap();
+        data.state
     }
     let mut state = new_state(&ctx.client, &update_endpoint).await;
     while matches!(
         state,
-        State::Running(DownloadRunning { .. }) | State::Paused(DownloadPaused { .. })
+        download::State::Running { .. } | download::State::Paused(_)
     ) {
         tokio::time::sleep(Duration::from_millis(500)).await;
         state = new_state(&ctx.client, &update_endpoint).await;
     }
     state = new_state(&ctx.client, &update_endpoint).await;
-    assert!(matches!(state, State::Complete(DownloadComplete {})));
+    assert!(matches!(state, download::State::Complete));
 }

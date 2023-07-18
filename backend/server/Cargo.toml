@@ -15,7 +15,6 @@ name = "server"
 [dependencies]
 bytes = "1.4.0"
 downloader = { path = "../downloader" }
-api = { path = "../api" }
 env_logger = "0.10.0"
 log = "0.4.18"
 serde = { version = "1.0.163", features = ["derive"] }
@@ -26,9 +25,7 @@ serde_yaml = "0.9.21"
 uuid = { version = "1.3.3", features = ["v4", "fast-rng", "macro-diagnostics", "serde"] }
 dirs = "5.0.1"
 async-trait = "0.1.68"
-prost = "0.11.9"
-prost-types = "0.11.9"
-reqwest = "0.11.18"
+reqwest = { version="0.11.18", features = ["json"]}
 test-context = "0.1.4"
 axum = { version = "0.6.18", features = ["macros"] }
 

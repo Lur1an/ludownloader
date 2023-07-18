@@ -1,7 +1,7 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
-use api::proto::download_state::State;
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
@@ -13,10 +13,18 @@ pub mod download;
 pub mod manager;
 pub mod observer;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DownloadMetadata {
+    pub id: Uuid,
+    pub url: String,
+    pub file_path: PathBuf,
+    pub content_length: u64,
+}
+
 /// This trait is used to subscribe to state updates of downloads
 #[async_trait]
 pub trait DownloadUpdateBatchSubscriber {
-    async fn update(&self, updates: &Vec<(Uuid, State)>);
+    async fn update(&self, updates: &Vec<(Uuid, download::State)>);
 }
 
 // Fuck this type, later on just remove the wrapping Arc<Mutex> and instead create a simple channel
@@ -39,7 +47,6 @@ mod test {
     use crate::util::{setup_test_download, TestResult};
 
     use super::*;
-    use api::proto::DownloadPaused;
     use test_log::test;
 
     const TEST_DOWNLOAD_URL: &str =
@@ -50,19 +57,12 @@ mod test {
         let (manager, observer, _) = init().await;
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let id = manager.add(download).await;
-        observer
-            .track(
-                id,
-                State::Paused(DownloadPaused {
-                    bytes_downloaded: 0,
-                }),
-            )
-            .await;
+        observer.track(id, download::State::Paused(0)).await;
         manager.start(&id).await?;
         manager.stop(&id).await?;
         let state = observer.read_state().await;
         let download_state = state.get(&id).unwrap();
-        assert!(matches!(download_state, State::Paused { .. }));
+        assert!(matches!(download_state, download::State::Paused(_)));
         Ok(())
     }
 }

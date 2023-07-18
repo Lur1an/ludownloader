@@ -1,9 +1,9 @@
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
+use crate::httpdownload::DownloadMetadata;
 
-use api::proto::DownloadMetadata;
 use std::collections::HashMap;
 use std::process::exit;
-use tokio::sync::{MutexGuard, RwLockWriteGuard};
+use tokio::sync::MutexGuard;
 use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
 
