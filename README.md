@@ -1,16 +1,12 @@
 # ludownloader
-A download manager with Rust backend and Svelte browser-frontend
+A download manager with Rust backend with a simple and open API to allow multiple client implementations.
 
 ---
 ## Downloader:
 - [x] Downloading files
-- [ ] A Frontend
 - [ ] Download-packaging
 - [ ] A way to manage multiple proxied `reqwest::Client` for Downloads
-- [ ] Premium download hoster implementations (e.g. rapidgator, uploaded, ...)
+- [ ] Premium download hoster implementations (e.g. rapidgator, uploaded, ...) on top of the HttpDownload module
 - [ ] Managing credentials
 - [ ] Module p2pdownload
-- [ ] Module Hyperdownload (Downloading multiple download-parts in parallel with potentially different proxies to bypass server speed-limits)
-- [ ] Link-crawler/grabber
-## Server
-The `server` crate is a webserver that initializes the managers and provides an API to interact with them, the communication protocol will be some form of binary-encoding of data structures.
+- [ ] Module Hyperdownload (Downloading multiple download-parts in parallel with different proxies to bypass server speed-limits)
