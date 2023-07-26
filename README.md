@@ -4,7 +4,9 @@ A download manager with Rust backend with a simple and open API to allow multipl
 ---
 ## Downloader:
 - [x] Downloading files
+- [x] REST API with integration tests.
 - [ ] Download-packaging
+- [ ] Storing download metadata on disk as a persistence layer
 - [ ] A way to manage multiple proxied `reqwest::Client` for Downloads
 - [ ] Premium download hoster implementations (e.g. rapidgator, uploaded, ...) on top of the HttpDownload module
 - [ ] Managing credentials
