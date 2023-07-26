@@ -1,4 +1,5 @@
 use dirs::{download_dir, home_dir};
+use downloader::httpdownload::DownloadMetadata;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,12 +12,14 @@ fn user_download_dir() -> PathBuf {
     dirs::download_dir().unwrap_or(PathBuf::from("/"))
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
     #[serde(default = "user_download_dir")]
     pub default_download_dir: PathBuf,
     #[serde(default)]
     pub max_concurrent_downloads: usize,
+    #[serde(default = "Vec::new")]
+    pub downloads: Vec<DownloadMetadata>,
 }
 
 #[derive(Debug, Clone)]
@@ -77,6 +80,7 @@ impl Default for Settings {
                 .map(|p| p.join("ludownloader"))
                 .unwrap_or_default(),
             max_concurrent_downloads: 0,
+            downloads: Vec::new(),
         }
     }
 }

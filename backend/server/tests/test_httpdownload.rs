@@ -107,7 +107,7 @@ async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
         .await
         .unwrap();
     let states: Vec<(Uuid, download::State)> = resp.json().await.unwrap();
-    for (id, state) in states.into_iter() {
+    for (_id, state) in states.into_iter() {
         assert!(matches!(state, download::State::Paused(_)));
     }
 }
