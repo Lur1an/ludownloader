@@ -1,7 +1,6 @@
-use async_trait::async_trait;
+
 use axum::{
-    body::{Body, Empty, HttpBody},
-    extract::{FromRef, FromRequestParts, Path, Query, State},
+    extract::{FromRef, Path, Query, State},
     response::{IntoResponse, Result},
     routing::{delete, get, post},
     Json, Router,
@@ -12,7 +11,7 @@ use downloader::{
     util::{file_size, parse_filename},
 };
 use reqwest::{Client, StatusCode, Url};
-use serde::{Deserialize, Serialize};
+
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -36,25 +35,25 @@ async fn delete_download(
     delete_file: Query<bool>,
     State(manager): State<DownloadManager>,
 ) -> impl IntoResponse {
-    let resp = match manager.delete(&id, *delete_file).await {
+    
+    match manager.delete(&id, *delete_file).await {
         Ok(_) => (StatusCode::OK, Json(json!({"id": id.to_string()}))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             json_error(format!("Couldn't delete Download: {}", e)),
         ),
-    };
-    resp
+    }
 }
 
 async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
-    let resp = match state.manager.stop(&id).await {
+    
+    match state.manager.stop(&id).await {
         Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
             json_error(format!("Couldn't stop Download: {}", e)),
         ),
-    };
-    resp
+    }
 }
 
 async fn start_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
@@ -174,7 +173,8 @@ async fn stop_all_downloads(state: State<ApplicationState>) {
 }
 
 pub fn routes() -> Router<ApplicationState> {
-    let app_router = Router::new()
+    
+    Router::new()
         .route("/", post(create_download))
         .route("/start_all", get(start_all_downloads))
         .route("/stop_all", get(stop_all_downloads))
@@ -183,6 +183,5 @@ pub fn routes() -> Router<ApplicationState> {
         .route("/:id", delete(delete_download).get(get_download))
         .route("/:id/start", get(start_download))
         .route("/:id/resume", get(resume_download))
-        .route("/:id/pause", get(pause_download));
-    app_router
+        .route("/:id/pause", get(pause_download))
 }
