@@ -13,7 +13,7 @@ pub async fn launch_app(listener: TcpListener) {
     let setting_manager = crate::settings::SettingManager::load(None).await;
     let (manager, observer, subscribers) = downloader::httpdownload::init().await;
     let state = ApplicationState {
-        manager,
+        download_manager: manager,
         observer,
         subscribers,
         setting_manager,

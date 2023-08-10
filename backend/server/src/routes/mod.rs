@@ -18,7 +18,7 @@ use crate::{api::DownloadData, settings};
 
 #[derive(Clone, FromRef)]
 pub struct ApplicationState {
-    pub manager: DownloadManager,
+    pub download_manager: DownloadManager,
     pub observer: DownloadObserver,
     pub subscribers: downloader::httpdownload::Subscribers,
     pub setting_manager: settings::SettingManager,
@@ -43,8 +43,11 @@ async fn delete_download(
     }
 }
 
-async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
-    match state.manager.stop(&id).await {
+async fn pause_download(
+    State(manager): State<DownloadManager>,
+    id: Path<Uuid>,
+) -> impl IntoResponse {
+    match manager.stop(&id).await {
         Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -53,8 +56,8 @@ async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl 
     }
 }
 
-async fn start_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
-    match state.manager.start(&id).await {
+async fn start_download(manager: State<DownloadManager>, id: Path<Uuid>) -> impl IntoResponse {
+    match manager.start(&id).await {
         Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -63,8 +66,11 @@ async fn start_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl 
     }
 }
 
-async fn resume_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
-    match state.manager.resume(&id).await {
+async fn resume_download(
+    State(manager): State<DownloadManager>,
+    id: Path<Uuid>,
+) -> impl IntoResponse {
+    match manager.resume(&id).await {
         Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -74,17 +80,23 @@ async fn resume_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl
 }
 
 async fn get_metadata(state: State<ApplicationState>) -> impl IntoResponse {
-    let data = state.manager.get_metadata_all().await;
+    let data = state.download_manager.get_metadata_all().await;
     Json(data)
 }
 
-async fn get_state(state: State<ApplicationState>) -> impl IntoResponse {
-    let data = state.observer.get_state_all().await;
+async fn get_state(State(observer): State<DownloadObserver>) -> impl IntoResponse {
+    let data = observer.get_state_all().await;
     Json(data)
 }
 
 async fn create_download(
-    state: State<ApplicationState>,
+    State(ApplicationState {
+        download_manager,
+        setting_manager,
+        observer,
+        client,
+        ..
+    }): State<ApplicationState>,
     url: String,
 ) -> Result<(StatusCode, Json<DownloadMetadata>), (StatusCode, Json<Value>)> {
     let url = match Url::parse(&url) {
@@ -94,12 +106,7 @@ async fn create_download(
             return Err((StatusCode::BAD_REQUEST, json_error(error)));
         }
     };
-    let download_directory = state
-        .setting_manager
-        .read()
-        .await
-        .default_download_dir
-        .clone();
+    let download_directory = setting_manager.read().await.default_download_dir.clone();
     let mut file_name = if let Some(file_name) = parse_filename(&url) {
         file_name.to_owned()
     } else {
@@ -118,7 +125,7 @@ async fn create_download(
         url,
         download_directory,
         file_name,
-        state.client.clone(),
+        client.clone(),
         None,
     )
     .await
@@ -131,9 +138,8 @@ async fn create_download(
     };
     let metadata = download.get_metadata();
     let bytes_downloaded = file_size(&download.file_path()).await;
-    let id = state.manager.add(download).await;
-    state
-        .observer
+    let id = download_manager.add(download).await;
+    observer
         .track(id, download::State::Paused(bytes_downloaded))
         .await;
     Ok((StatusCode::CREATED, Json(metadata)))
@@ -143,7 +149,7 @@ async fn get_download(
     id: Path<Uuid>,
     state: State<ApplicationState>,
 ) -> Result<(StatusCode, Json<DownloadData>), (StatusCode, Json<Value>)> {
-    let metadata = match state.manager.get_metadata(&id).await {
+    let metadata = match state.download_manager.get_metadata(&id).await {
         Ok(value) => value,
         Err(e) => {
             let error = format!("Error getting download_metadata: {}", e);
@@ -161,12 +167,12 @@ async fn get_download(
     Ok((StatusCode::OK, message))
 }
 
-async fn start_all_downloads(state: State<ApplicationState>) {
-    state.manager.start_all().await;
+async fn start_all_downloads(State(download_manager): State<DownloadManager>) {
+    download_manager.start_all().await;
 }
 
-async fn stop_all_downloads(state: State<ApplicationState>) {
-    state.manager.stop_all().await;
+async fn stop_all_downloads(State(download_manager): State<DownloadManager>) {
+    download_manager.stop_all().await;
 }
 
 pub fn routes() -> Router<ApplicationState> {
