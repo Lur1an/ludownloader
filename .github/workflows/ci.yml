@@ -39,7 +39,7 @@ jobs:
 
   clippy:
     name: clippy
-    depends-on: build
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -53,7 +53,7 @@ jobs:
   test:
     needs: build-rust
     runs-on: ubuntu-latest
-    depends-on: build
+    needs: build
     steps:
       - uses: actions/checkout@v3
     
