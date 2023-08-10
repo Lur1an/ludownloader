@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use axum::{
     body::{Body, Empty, HttpBody},
-    extract::{FromRequestParts, Path, Query, State},
+    extract::{FromRef, FromRequestParts, Path, Query, State},
     response::{IntoResponse, Result},
     routing::{delete, get, post},
     Json, Router,
@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 use crate::{api::DownloadData, settings};
 
-#[derive(Clone)]
+#[derive(Clone, FromRef)]
 pub struct ApplicationState {
     pub manager: DownloadManager,
     pub observer: DownloadObserver,
@@ -34,9 +34,9 @@ fn json_error(message: String) -> Json<Value> {
 async fn delete_download(
     id: Path<Uuid>,
     delete_file: Query<bool>,
-    state: State<ApplicationState>,
+    State(manager): State<DownloadManager>,
 ) -> impl IntoResponse {
-    let resp = match state.manager.delete(&id, *delete_file).await {
+    let resp = match manager.delete(&id, *delete_file).await {
         Ok(_) => (StatusCode::OK, Json(json!({"id": id.to_string()}))),
         Err(e) => (
             StatusCode::BAD_REQUEST,

@@ -1,10 +1,8 @@
-use async_trait::async_trait;
 use reqwest::header::HeaderMap;
 use reqwest::{header, Client, Url};
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tempfile::TempDir;
-use test_context::AsyncTestContext;
 
 use crate::httpdownload::download::HttpDownload;
 
@@ -53,7 +51,7 @@ pub fn supports_byte_ranges(headers: &HeaderMap) -> bool {
     }
 }
 
-pub async fn setup_test_download(url_str: &str) -> Result<(HttpDownload, TempDir), Box<dyn Error>> {
+pub async fn setup_test_download(url_str: &str) -> anyhow::Result<(HttpDownload, TempDir)> {
     let tmp_dir = TempDir::new()?;
     let tmp_path = tmp_dir.path().to_owned();
     let url = Url::parse(url_str)?;

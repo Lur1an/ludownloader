@@ -9,13 +9,13 @@ use test_context::{test_context, AsyncTestContext};
 use test_log::test;
 use uuid::Uuid;
 
-struct IntegrationTestContext {
+struct Ctx {
     pub client: reqwest::Client,
     pub server_url: Url,
 }
 
 #[async_trait]
-impl AsyncTestContext for IntegrationTestContext {
+impl AsyncTestContext for Ctx {
     async fn setup() -> Self {
         let listener = std::net::TcpListener::bind("0.0.0.0:0").unwrap();
         let local_addr = listener.local_addr().unwrap();
@@ -23,7 +23,7 @@ impl AsyncTestContext for IntegrationTestContext {
         log::info!("Local server running on {}", server_url);
         let client = reqwest::Client::builder().build().unwrap();
         tokio::spawn(launch_app(listener));
-        IntegrationTestContext { client, server_url }
+        Ctx { client, server_url }
     }
 }
 
@@ -32,13 +32,12 @@ struct ApiError {
     error: String,
 }
 
-#[test_context(IntegrationTestContext)]
+#[test_context(Ctx)]
 #[test(tokio::test)]
-async fn test_download_crud(ctx: &mut IntegrationTestContext) {
+async fn test_download_crud(Ctx { client, server_url }: &mut Ctx) {
     let body = "https://speed.hetzner.de/1GB.bin".to_owned();
-    let resp = ctx
-        .client
-        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+    let resp = client
+        .post(server_url.join("/api/v1/httpdownload").unwrap())
         .body(body)
         .send()
         .await
@@ -47,9 +46,8 @@ async fn test_download_crud(ctx: &mut IntegrationTestContext) {
     let metadata: DownloadMetadata = resp.json().await.unwrap();
     assert_eq!(metadata.content_length, 1048576000);
     let incorrect_url = "hgesdg98wq19".to_owned();
-    let resp = ctx
-        .client
-        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+    let resp = client
+        .post(server_url.join("/api/v1/httpdownload").unwrap())
         .body(incorrect_url)
         .send()
         .await
@@ -58,9 +56,8 @@ async fn test_download_crud(ctx: &mut IntegrationTestContext) {
     let body: ApiError = resp.json().await.unwrap();
     assert!(body.error.contains("Invalid URL"));
     let fake_url = "http://ahahahahahaha_wtf.com/something.zip";
-    let resp = ctx
-        .client
-        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+    let resp = client
+        .post(server_url.join("/api/v1/httpdownload").unwrap())
         .body(fake_url)
         .send()
         .await
@@ -70,28 +67,22 @@ async fn test_download_crud(ctx: &mut IntegrationTestContext) {
     assert!(body.error.contains("Error creating download"));
 }
 
-#[test_context(IntegrationTestContext)]
+#[test_context(Ctx)]
 #[test(tokio::test)]
-async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
+async fn test_multiple_download_crud(Ctx { client, server_url }: &mut Ctx) {
     let download_url = "https://speed.hetzner.de/1GB.bin";
     for _ in 0..20 {
         let body = download_url.to_owned();
-        let resp = ctx
-            .client
-            .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+        let resp = client
+            .post(server_url.join("/api/v1/httpdownload").unwrap())
             .body(body)
             .send()
             .await
             .unwrap();
         assert_eq!(resp.status(), StatusCode::CREATED);
     }
-    let resp = ctx
-        .client
-        .get(
-            ctx.server_url
-                .join("/api/v1/httpdownload/metadata")
-                .unwrap(),
-        )
+    let resp = client
+        .get(server_url.join("/api/v1/httpdownload/metadata").unwrap())
         .send()
         .await
         .unwrap();
@@ -100,9 +91,8 @@ async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
     for metadata in metadata.iter() {
         assert_eq!(metadata.url, download_url);
     }
-    let resp = ctx
-        .client
-        .get(ctx.server_url.join("/api/v1/httpdownload/state").unwrap())
+    let resp = client
+        .get(server_url.join("/api/v1/httpdownload/state").unwrap())
         .send()
         .await
         .unwrap();
@@ -112,24 +102,22 @@ async fn test_multiple_download_crud(ctx: &mut IntegrationTestContext) {
     }
 }
 
-#[test_context(IntegrationTestContext)]
+#[test_context(Ctx)]
 #[test(tokio::test)]
-async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
+async fn test_download_start_stop_resume(Ctx { client, server_url }: &mut Ctx) {
     let body =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb".to_owned();
-    let resp = ctx
-        .client
-        .post(ctx.server_url.join("/api/v1/httpdownload").unwrap())
+    let resp = client
+        .post(server_url.join("/api/v1/httpdownload").unwrap())
         .body(body)
         .send()
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let metadata: DownloadMetadata = resp.json().await.unwrap();
-    let resp = ctx
-        .client
+    let resp = client
         .get(
-            ctx.server_url
+            server_url
                 .join(format!("/api/v1/httpdownload/{}/start", metadata.id).as_ref())
                 .unwrap(),
         )
@@ -138,23 +126,25 @@ async fn test_download_start_stop_resume(ctx: &mut IntegrationTestContext) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
 
-    let update_endpoint = ctx
-        .server_url
+    let update_endpoint = server_url
         .join(format!("/api/v1/httpdownload/{}", metadata.id).as_ref())
         .unwrap();
-    async fn new_state(client: &Client, endpoint: &Url) -> download::State {
+
+    async fn fetch_state(client: &Client, endpoint: &Url) -> download::State {
         let resp = client.get(endpoint.clone()).send().await.unwrap();
         let data: DownloadData = resp.json().await.unwrap();
         data.state
     }
-    let mut state = new_state(&ctx.client, &update_endpoint).await;
+
+    let mut state = fetch_state(&client, &update_endpoint).await;
     while matches!(
         state,
         download::State::Running { .. } | download::State::Paused(_)
     ) {
         tokio::time::sleep(Duration::from_millis(500)).await;
-        state = new_state(&ctx.client, &update_endpoint).await;
+        state = fetch_state(&client, &update_endpoint).await;
     }
-    state = new_state(&ctx.client, &update_endpoint).await;
+
+    state = fetch_state(&client, &update_endpoint).await;
     assert!(matches!(state, download::State::Complete));
 }

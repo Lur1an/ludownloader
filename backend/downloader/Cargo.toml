@@ -22,6 +22,7 @@ tempfile = "3.3.0"
 test-log = "0.2.11"
 test-context = "0.1.4"
 serde = { version = "1.0.171", features = ["derive"] }
+anyhow = "1.0.72"
 
 
 [dev-dependencies]
