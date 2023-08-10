@@ -51,7 +51,6 @@ jobs:
         working-directory: ./backend
 
   test:
-    needs: build-rust
     runs-on: ubuntu-latest
     needs: build
     steps:
