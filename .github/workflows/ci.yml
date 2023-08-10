@@ -47,7 +47,7 @@ jobs:
         with:
           components: clippy
       - name: Clippy lints
-        run: cargo clippy -- -D warnings
+        run: cargo clippy -- -D warnings -W clippy::new_without_default
         working-directory: ./backend
 
   test:
