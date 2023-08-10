@@ -47,8 +47,8 @@ impl DownloadManager {
     /// The update_consumer is placed in a separate thread and will receive all updates from all downloads.
     pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         let inner = Arc::new(RwLock::new(Inner::new(update_consumer)));
-        let manager = Self { inner };
-        manager
+        
+        Self { inner }
     }
 
     pub async fn start(&self, id: &Uuid) -> Result<()> {
@@ -88,8 +88,8 @@ impl DownloadManager {
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
         let mut inner = self.inner.write().await;
-        let id = inner.add(download);
-        id
+        
+        inner.add(download)
     }
 
     pub async fn delete(&self, id: &Uuid, delete_file: bool) -> Result<()> {

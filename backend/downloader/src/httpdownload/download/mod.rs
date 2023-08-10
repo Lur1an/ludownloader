@@ -122,7 +122,7 @@ impl HttpDownload {
             .header(RANGE, format!("bytes={}-", bytes_on_disk))
             .send()
             .await?;
-        Ok(self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk).await?)
+        self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk).await
     }
 
     pub async fn create(

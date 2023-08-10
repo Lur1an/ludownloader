@@ -117,7 +117,7 @@ impl UpdateConsumer for DownloadUpdatePublisher {
             let updates = Arc::new(
                 self.cache
                     .drain()
-                    .map(|(id, state)| (id, state.into()))
+                    .map(|(id, state)| (id, state))
                     .collect::<Vec<(Uuid, download::State)>>(),
             );
             let subscribers = self.subscribers.clone();
