@@ -30,7 +30,7 @@ pub struct SettingManager {
 
 fn default_settings_path() -> PathBuf {
     let home_dir = home_dir().unwrap_or_default();
-    
+
     home_dir.join(".ludownloader/settings.yaml")
 }
 

@@ -1,4 +1,3 @@
-
 use axum::{
     extract::{FromRef, Path, Query, State},
     response::{IntoResponse, Result},
@@ -35,7 +34,6 @@ async fn delete_download(
     delete_file: Query<bool>,
     State(manager): State<DownloadManager>,
 ) -> impl IntoResponse {
-    
     match manager.delete(&id, *delete_file).await {
         Ok(_) => (StatusCode::OK, Json(json!({"id": id.to_string()}))),
         Err(e) => (
@@ -46,7 +44,6 @@ async fn delete_download(
 }
 
 async fn pause_download(state: State<ApplicationState>, id: Path<Uuid>) -> impl IntoResponse {
-    
     match state.manager.stop(&id).await {
         Ok(_) => (StatusCode::OK, Json(Value::default())),
         Err(e) => (
@@ -173,7 +170,6 @@ async fn stop_all_downloads(state: State<ApplicationState>) {
 }
 
 pub fn routes() -> Router<ApplicationState> {
-    
     Router::new()
         .route("/", post(create_download))
         .route("/start_all", get(start_all_downloads))
