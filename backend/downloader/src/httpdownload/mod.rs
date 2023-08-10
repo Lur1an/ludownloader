@@ -24,7 +24,7 @@ pub struct DownloadMetadata {
 /// This trait is used to subscribe to state updates of downloads
 #[async_trait]
 pub trait DownloadUpdateBatchSubscriber {
-    async fn update(&self, updates: &Vec<(Uuid, download::State)>);
+    async fn update(&self, updates: &[(Uuid, download::State)]);
 }
 
 // Fuck this type, later on just remove the wrapping Arc<Mutex> and instead create a simple channel

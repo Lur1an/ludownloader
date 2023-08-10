@@ -55,7 +55,7 @@ impl DownloadObserver {
 
 #[async_trait]
 impl DownloadUpdateBatchSubscriber for DownloadObserver {
-    async fn update(&self, updates: &Vec<(Uuid, download::State)>) {
+    async fn update(&self, updates: &[(Uuid, download::State)]) {
         log::info!("Updating inner state for DownloadObserver, acquiring lock...");
         let mut guard = self.state.write().await;
         log::info!("Lock acquired, updating {} entries...", updates.len());

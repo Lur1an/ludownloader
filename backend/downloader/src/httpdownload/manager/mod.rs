@@ -47,7 +47,7 @@ impl DownloadManager {
     /// The update_consumer is placed in a separate thread and will receive all updates from all downloads.
     pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         let inner = Arc::new(RwLock::new(Inner::new(update_consumer)));
-        
+
         Self { inner }
     }
 
@@ -88,7 +88,7 @@ impl DownloadManager {
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
         let mut inner = self.inner.write().await;
-        
+
         inner.add(download)
     }
 
@@ -101,12 +101,11 @@ impl DownloadManager {
         if let Some(item) = inner.remove(id) {
             if delete_file {
                 let file_path = item.metadata.file_path;
-                match tokio::fs::remove_file(file_path).await {
-                    Err(e) => log::warn!(
+                if let Err(e) = tokio::fs::remove_file(file_path).await {
+                    log::warn!(
                         "Couldn't delete file for httpdownload after removing from manager: {}",
                         e
-                    ),
-                    _ => (),
+                    );
                 };
             }
         };

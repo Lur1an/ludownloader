@@ -10,12 +10,12 @@ use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot::error::TryRecvError;
 use tokio::sync::{mpsc, oneshot};
 
-use crate::util::{file_size, supports_byte_ranges, mb, HALF_SECOND};
+use crate::util::{file_size, mb, supports_byte_ranges, HALF_SECOND};
 
 use self::config::HttpDownloadConfig;
 
 use super::DownloadMetadata;
-    
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("File IO operation failed, error: '{0}'")]
@@ -31,7 +31,7 @@ pub enum Error {
     #[error("Download req did not yield 200, instead: '{0}', body: '{1}'")]
     DownloadNotOk(reqwest::StatusCode, String),
     #[error("Download ended before completion, downloaded bytes: '{0}'")]
-    StreamEndedBeforeCompletion(u64)
+    StreamEndedBeforeCompletion(u64),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -45,7 +45,6 @@ pub enum State {
     Error(String),
 }
 
-
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug)]
@@ -53,7 +52,6 @@ pub struct DownloadUpdate {
     pub id: uuid::Uuid,
     pub state: State,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
@@ -79,9 +77,14 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send()
             .await?;
-        log::info!("Starting new download for url {}, creating file at {:?}", self.url, self.file_path());
+        log::info!(
+            "Starting new download for url {}, creating file at {:?}",
+            self.url,
+            self.file_path()
+        );
         let file_handler = File::create(self.file_path()).await?;
-        self.progress(resp, file_handler, stop_ch, update_ch, 0).await
+        self.progress(resp, file_handler, stop_ch, update_ch, 0)
+            .await
     }
 
     pub fn file_path(&self) -> PathBuf {
@@ -122,7 +125,8 @@ impl HttpDownload {
             .header(RANGE, format!("bytes={}-", bytes_on_disk))
             .send()
             .await?;
-        self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk).await
+        self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk)
+            .await
     }
 
     pub async fn create(
@@ -135,8 +139,7 @@ impl HttpDownload {
         // If no configuration is passed the default one is copied
         let config = config.unwrap_or_default();
         let id = uuid::Uuid::new_v4();
-        let resp = 
-            client
+        let resp = client
             .get(url.as_ref())
             .timeout(config.timeout)
             .headers(config.headers.clone())
@@ -148,8 +151,8 @@ impl HttpDownload {
             reqwest::StatusCode::OK => {}
             _ => {
                 let body = resp.text().await.unwrap_or_default();
-                return Err(Error::DownloadNotOk(status, body))
-            },
+                return Err(Error::DownloadNotOk(status, body));
+            }
         };
 
         let content_length = match resp.content_length() {
@@ -188,15 +191,15 @@ impl HttpDownload {
             last_bytes_downloaded += bytes_written;
             let elapsed = last_update.elapsed();
             if elapsed > HALF_SECOND {
-                let _ = update_ch.try_send(
-                    DownloadUpdate {
-                        id: self.id,
-                        state: State::Running {
-                            bytes_downloaded: downloaded_bytes,
-                            bytes_per_second: last_bytes_downloaded / last_update.elapsed().as_millis() as u64 * 1000,
-                        },
-                    }
-                );
+                let _ = update_ch.try_send(DownloadUpdate {
+                    id: self.id,
+                    state: State::Running {
+                        bytes_downloaded: downloaded_bytes,
+                        bytes_per_second: last_bytes_downloaded
+                            / last_update.elapsed().as_millis() as u64
+                            * 1000,
+                    },
+                });
                 last_update = std::time::Instant::now();
                 last_bytes_downloaded = 0u64;
             }
@@ -207,7 +210,10 @@ impl HttpDownload {
                 }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Closed) => {
-                    log::error!("Download stop signal channel closed for: {}, this shouldn't happen!", self.url);
+                    log::error!(
+                        "Download stop signal channel closed for: {}, this shouldn't happen!",
+                        self.url
+                    );
                     log::info!("Stopping download because of channel error: {}", self.url);
                     return Err(Error::ChannelDrop(downloaded_bytes, self.url.clone()));
                 }
@@ -230,7 +236,12 @@ impl HttpDownload {
     }
 
     pub fn get_metadata(&self) -> DownloadMetadata {
-        DownloadMetadata { id: self.id, url: self.url.to_string(), file_path: self.file_path(), content_length: self.content_length }
+        DownloadMetadata {
+            id: self.id,
+            url: self.url.to_string(),
+            file_path: self.file_path(),
+            content_length: self.content_length,
+        }
     }
 
     pub async fn get_bytes_on_disk(&self) -> u64 {
@@ -342,12 +353,12 @@ mod test {
         let downloaded_bytes = download.resume(rx, update_sender).await?;
         let bytes_on_disk = download.get_bytes_on_disk().await;
         assert_eq!(
-            downloaded_bytes, 
+            downloaded_bytes,
             content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
         );
         assert_eq!(
-            bytes_on_disk, 
+            bytes_on_disk,
             content_length,
             "The bytes on disk need to be equal to the content_length when the download is finished"
         );
