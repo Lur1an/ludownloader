@@ -62,10 +62,10 @@ impl DownloadUpdateBatchSubscriber for DownloadObserver {
         for (id, state) in updates.iter() {
             if !guard.contains_key(id) {
                 log::warn!("Received an update for a download whose state is not being tracket by the Observer.");
-                continue;
+            } else {
+                log::info!("Updating state for download {}", id);
+                guard.insert(*id, state.clone());
             }
-            log::info!("Updating state for download {}", id);
-            guard.insert(*id, state.clone());
         }
     }
 }
@@ -114,12 +114,8 @@ impl UpdateConsumer for DownloadUpdatePublisher {
         // thread that called consume for too long (just the time to create an update array, wrap
         // it in Arc and spawn the tokio task).
         if flush {
-            let updates = Arc::new(
-                self.cache
-                    .drain()
-                    .map(|(id, state)| (id, state))
-                    .collect::<Vec<(Uuid, download::State)>>(),
-            );
+            let updates: Arc<[(Uuid, download::State)]> =
+                self.cache.drain().map(|(id, state)| (id, state)).collect();
             let subscribers = self.subscribers.clone();
             tokio::task::spawn(async move {
                 log::info!(
