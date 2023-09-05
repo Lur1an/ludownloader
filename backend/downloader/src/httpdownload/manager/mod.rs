@@ -36,7 +36,6 @@ pub trait UpdateConsumer {
 /// This struct takes care of storing/running/stopping downloads.
 /// Internally it uses a RwLock to allow for concurrent access,
 /// this exposes a thread-safe interface.
-/// only anyways)
 /// This struct is supposed to be cloned as it uses an Arc internally.
 #[derive(Clone, Default)]
 pub struct DownloadManager {

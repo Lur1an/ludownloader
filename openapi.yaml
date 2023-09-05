@@ -1,0 +1,41 @@
+openapi: 3.1.0
+components:
+  schemas:
+    CreateDownload:
+      type: object
+      properties:
+        url:
+          type: string
+        file_path:
+          type: string
+      required: 
+        - url
+
+    DownloadData2:
+      type: object
+      properties:
+        metadata:
+          $ref: '#/components/schemas/DownloadMetadata2'
+      required:
+        - metadata
+
+    DownloadMetadata2:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+        file_path:
+          type: string
+        content_length:
+          type: integer
+
+      required:
+        - id
+        - url
+        - file_path
+        - content_length
+    
+  
