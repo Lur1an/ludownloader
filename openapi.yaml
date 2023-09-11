@@ -1,6 +1,60 @@
 openapi: 3.1.0
+info:
+  title: Ludownloader backend API
+  description: Optional multiline or single-line description in [CommonMark](http://commonmark.org/help/) or HTML.
+  version: 0.1.9
+paths:
+  /api/v1/httpdownload:
+    post:
+      operationId: createDownload
+      summary: Create a new download
+      responses:
+        '200':
+          description: Download created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadData2'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateDownload'
 components:
   schemas:
+    DownloadState:
+      oneOf:
+        - type: object
+          title: Complete
+          additionalProperties: false
+        - type: object
+          title: Paused
+          properties:
+            bytesDownloaded:
+              type: integer
+              minimum: 0
+          required:
+            - bytesDownloaded
+        - type: object
+          title: Running
+          properties:
+            bytesDownloaded:
+              type: integer
+              minimum: 0
+            bytesPerSecond:
+              type: integer
+              minimum: 0
+          required:
+            - bytesPerSecond
+            - bytesDownloaded
+        - type: object
+          tite: Error
+          properties:
+            error:
+              type: string
+          required:
+            - error
+          
     CreateDownload:
       type: object
       properties:
@@ -11,12 +65,15 @@ components:
       required: 
         - url
 
-    DownloadData2:
+    DownloadData:
       type: object
       properties:
         metadata:
-          $ref: '#/components/schemas/DownloadMetadata2'
+          $ref: '#/components/schemas/DownloadMetadata'
+        state:
+          $ref: '#/components/schemas/DownloadState'
       required:
+        - state
         - metadata
 
     DownloadMetadata2:
