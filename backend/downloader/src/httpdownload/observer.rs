@@ -48,8 +48,7 @@ impl DownloadObserver {
     }
 
     pub async fn track(&self, id: Uuid, state: download::State) {
-        let mut guard = self.state.write().await;
-        guard.insert(id, state);
+        self.state.write().await.insert(id, state);
     }
 }
 
@@ -78,8 +77,7 @@ impl DownloadUpdateBatchSubscriber for DownloadObserver {
 /// if we tried to just use a DownloadObserver that catches in a background thread
 /// all updates from the Manager and shares a State-Map with a Mutex we'd risk filling up the
 /// buffer and locking up everything if we read too much from the Observer. This middle man never
-/// blocks during the consumption of updates, it creates an Arc<Vec> of the aggregated state that is sent in a
-/// non-blocking manner to all subscribers that then will have to consume the updates
+/// blocks during the consumption of updates, it creates an Arc<[T]> of the aggregated state that is sent in a non-blocking manner to all subscribers that then will have to consume the updates
 pub struct DownloadUpdatePublisher {
     pub subscribers: Subscribers,
     last_flush: Instant,

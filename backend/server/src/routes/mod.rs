@@ -1,5 +1,7 @@
+pub mod httpdownload;
+
 use axum::{
-    extract::{FromRef, Path, Query, State},
+    extract::{Path, Query, State},
     response::{IntoResponse, Result},
     routing::{delete, get, post},
     Json, Router,
@@ -9,21 +11,12 @@ use downloader::{
     httpdownload::{download::HttpDownload, manager::DownloadManager, observer::DownloadObserver},
     util::{file_size, parse_filename},
 };
-use reqwest::{Client, StatusCode, Url};
+use reqwest::{StatusCode, Url};
 
 use serde_json::{json, Value};
 use uuid::Uuid;
 
-use crate::{api::DownloadData, settings};
-
-#[derive(Clone, FromRef)]
-pub struct ApplicationState {
-    pub download_manager: DownloadManager,
-    pub observer: DownloadObserver,
-    pub subscribers: downloader::httpdownload::Subscribers,
-    pub setting_manager: settings::SettingManager,
-    pub client: Client,
-}
+use crate::{api::DownloadData, ApplicationState};
 
 fn json_error(message: String) -> Json<Value> {
     Json(json!({ "error": message }))
@@ -155,14 +148,16 @@ async fn get_download(
             let error = format!("Error getting download_metadata: {}", e);
             return Err((StatusCode::BAD_REQUEST, json_error(error)));
         }
-    };
+    }
+    .into();
     let state = match state.observer.get_state(&id).await {
         Some(v) => v,
         None => {
             let error = format!("Error getting download_state: {}", *id);
             return Err((StatusCode::BAD_REQUEST, json_error(error)));
         }
-    };
+    }
+    .into();
     let message = Json(DownloadData { state, metadata });
     Ok((StatusCode::OK, message))
 }

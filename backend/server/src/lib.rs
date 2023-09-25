@@ -1,12 +1,15 @@
 pub mod api;
-mod app;
 mod routes;
 mod settings;
 
 use std::net::TcpListener;
 
 use axum::Router;
-use routes::{routes, ApplicationState};
+use axum::extract::FromRef;
+use downloader::httpdownload::manager::DownloadManager;
+use downloader::httpdownload::observer::DownloadObserver;
+use reqwest::Client;
+use routes::routes;
 
 pub async fn launch_app(listener: TcpListener) {
     // init state
@@ -28,4 +31,13 @@ pub async fn launch_app(listener: TcpListener) {
         .serve(app.into_make_service())
         .await
         .unwrap();
+}
+
+#[derive(Clone, FromRef)]
+pub struct ApplicationState {
+    pub download_manager: DownloadManager,
+    pub observer: DownloadObserver,
+    pub subscribers: downloader::httpdownload::Subscribers,
+    pub setting_manager: settings::SettingManager,
+    pub client: Client,
 }

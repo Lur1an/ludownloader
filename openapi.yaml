@@ -14,12 +14,23 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/DownloadData2'
+                $ref: '#/components/schemas/DownloadData'
       requestBody:
         content:
           application/json:
             schema:
               $ref: '#/components/schemas/CreateDownload'
+  /api/v1/httpdownload/{id}:
+    get:
+      operationId: getDownload
+      summary: Get data about a download
+      responses:
+        '200':
+          description: Download data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadData'
 components:
   schemas:
     DownloadState:
@@ -48,13 +59,13 @@ components:
             - bytesPerSecond
             - bytesDownloaded
         - type: object
-          tite: Error
+          title: Error
           properties:
             error:
               type: string
           required:
             - error
-          
+
     CreateDownload:
       type: object
       properties:
@@ -62,7 +73,7 @@ components:
           type: string
         file_path:
           type: string
-      required: 
+      required:
         - url
 
     DownloadData:
@@ -76,7 +87,7 @@ components:
         - state
         - metadata
 
-    DownloadMetadata2:
+    DownloadMetadata:
       type: object
       properties:
         id:
@@ -88,6 +99,7 @@ components:
           type: string
         content_length:
           type: integer
+          minimum: 0
 
       required:
         - id

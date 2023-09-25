@@ -1,6 +1,0 @@
-[workspace]
-members = [
-    "downloader",
-    "server",
-]
-resolver = "2"

@@ -13,7 +13,7 @@ path = "src/main.rs"
 name = "server"
 
 [build-dependencies]
-schema2code = "0.1.1"
+schema2code = "0.1.3"
 serde_yaml = "0.9.25"
 
 [dependencies]

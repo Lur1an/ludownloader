@@ -4,7 +4,10 @@ use async_trait::async_trait;
 use downloader::httpdownload::{download, DownloadMetadata};
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
-use server::{api::DownloadData, launch_app};
+use server::{
+    api::{DownloadData, DownloadState},
+    launch_app,
+};
 use test_context::{test_context, AsyncTestContext};
 use test_log::test;
 use uuid::Uuid;
@@ -130,7 +133,7 @@ async fn test_download_start_stop_resume(Ctx { client, server_url }: &mut Ctx) {
         .join(format!("/api/v1/httpdownload/{}", metadata.id).as_ref())
         .unwrap();
 
-    async fn fetch_state(client: &Client, endpoint: &Url) -> download::State {
+    async fn fetch_state(client: &Client, endpoint: &Url) -> DownloadState {
         let resp = client.get(endpoint.clone()).send().await.unwrap();
         let data: DownloadData = resp.json().await.unwrap();
         data.state
@@ -139,12 +142,12 @@ async fn test_download_start_stop_resume(Ctx { client, server_url }: &mut Ctx) {
     let mut state = fetch_state(&client, &update_endpoint).await;
     while matches!(
         state,
-        download::State::Running { .. } | download::State::Paused(_)
+        DownloadState::Running { .. } | DownloadState::Paused(_)
     ) {
         tokio::time::sleep(Duration::from_millis(500)).await;
         state = fetch_state(&client, &update_endpoint).await;
     }
 
     state = fetch_state(&client, &update_endpoint).await;
-    assert!(matches!(state, download::State::Complete));
+    assert!(matches!(state, DownloadState::Complete(_)));
 }
