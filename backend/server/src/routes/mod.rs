@@ -2,7 +2,7 @@ pub mod httpdownload;
 
 use axum::{
     extract::{Path, Query, State},
-    response::{IntoResponse, Result},
+    response::{IntoResponse, Response, Result},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -20,6 +20,20 @@ use crate::{api::DownloadData, ApplicationState};
 
 fn json_error(message: String) -> Json<Value> {
     Json(json!({ "error": message }))
+}
+
+pub struct AppError {
+    e: anyhow::Error,
+    code: StatusCode,
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> axum::response::Response {
+        Response::builder()
+            .status(self.code)
+            .body(json_error(self.e.to_string()))
+            .unwrap()
+    }
 }
 
 async fn delete_download(
