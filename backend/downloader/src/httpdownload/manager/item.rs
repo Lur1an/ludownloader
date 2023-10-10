@@ -1,7 +1,8 @@
 use super::download;
 use super::download::{DownloadUpdate, HttpDownload};
-use crate::httpdownload::manager::{Error, Result};
+use crate::httpdownload::manager::Result;
 use crate::httpdownload::DownloadMetadata;
+use anyhow::anyhow;
 use std::sync::Arc;
 use tokio::sync::{mpsc, oneshot, Mutex};
 
@@ -12,8 +13,6 @@ pub struct DownloaderItem {
     pub download: Arc<Mutex<HttpDownload>>,
     pub metadata: DownloadMetadata,
     /// This sender contains the channel to notify the thread to stop the download function
-    /// This is only None if the Download has been stopped, there are edge cases where the function
-    /// crashes and the tx value is still Some(tx)
     tx: Option<oneshot::Sender<()>>,
 }
 
@@ -84,10 +83,10 @@ impl DownloaderItem {
 
     pub fn stop(&mut self) -> Result<()> {
         if let Some(tx) = self.tx.take() {
-            let _ = tx.send(());
-            Ok(())
+            tx.send(())
+                .map_err(|e| anyhow!("Error sending stop signal: {:?}", e))
         } else {
-            Err(Error::DownloadNotRunning)
+            Err(anyhow!("Can't stop a download that is not running"))
         }
     }
 }

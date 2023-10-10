@@ -4,7 +4,6 @@ mod item;
 use crate::httpdownload::download;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use std::sync::Arc;
-use thiserror;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -12,21 +11,7 @@ use self::inner::Inner;
 
 use super::DownloadMetadata;
 
-pub type Result<T> = std::result::Result<T, Error>;
-
-#[derive(Debug, thiserror::Error)]
-pub enum Error {
-    #[error("Error while trying to access download in map: {0}")]
-    Access(String),
-    #[error("Error occurred while downloading: {0}")]
-    HttpDownloadError(#[from] download::Error),
-    #[error("JoinError for download: {0}")]
-    TokioJoinError(#[from] tokio::task::JoinError),
-    #[error("Download is not running")]
-    DownloadNotRunning,
-    #[error("Couldn't acquire Lock for Download: {0}")]
-    LockError(#[from] tokio::sync::TryLockError),
-}
+pub type Result<T> = anyhow::Result<T>;
 
 /// Trait for a struct that can handle DownloadUpdates.
 pub trait UpdateConsumer {
@@ -87,16 +72,12 @@ impl DownloadManager {
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
         let mut inner = self.inner.write().await;
-
         inner.add(download)
     }
 
     pub async fn delete(&self, id: &Uuid, delete_file: bool) -> Result<()> {
         let mut inner = self.inner.write().await;
-        // Download id does not exist case
-        if let Err(Error::Access(e)) = inner.stop(id) {
-            return Err(Error::Access(e));
-        }
+        let _ = inner.stop(id); // ignore error
         if let Some(item) = inner.remove(id) {
             if delete_file {
                 let file_path = item.metadata.file_path;
@@ -116,13 +97,12 @@ impl DownloadManager {
 mod test {
     use super::*;
     use crate::util::{file_size, setup_test_download};
-    use std::error::Error;
     use test_log::test;
     use tokio::time;
 
     const TEST_DOWNLOAD_URL: &str =
         "https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb";
-    type Test<T> = std::result::Result<T, Box<dyn Error>>;
+    type Test<T> = anyhow::Result<T>;
 
     #[test(tokio::test)]
     async fn start_stop_delete_download() -> Test<()> {

@@ -1,6 +1,7 @@
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use crate::httpdownload::DownloadMetadata;
 
+use anyhow::anyhow;
 use std::collections::HashMap;
 use std::process::exit;
 use tokio::sync::MutexGuard;
@@ -8,7 +9,7 @@ use tokio::{sync::mpsc, task::JoinHandle};
 use uuid::Uuid;
 
 use super::item::DownloaderItem;
-use super::{Error, Result, UpdateConsumer};
+use super::{Result, UpdateConsumer};
 
 impl UpdateConsumer for () {
     fn consume(&mut self, update: DownloadUpdate) {
@@ -19,7 +20,6 @@ impl UpdateConsumer for () {
 #[derive(Debug)]
 pub struct Inner {
     pub update_ch: mpsc::Sender<DownloadUpdate>,
-    _consumer_thread: JoinHandle<()>,
     pub items: HashMap<Uuid, DownloaderItem>,
 }
 
@@ -33,7 +33,7 @@ impl Inner {
     pub fn new(mut update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         let (update_sender, mut update_recv) = mpsc::channel::<DownloadUpdate>(1000);
         log::info!("Spawning update consumer task");
-        let consumer_thread = tokio::task::spawn(async move {
+        tokio::task::spawn(async move {
             while let Some(update) = update_recv.recv().await {
                 update_consumer.consume(update);
             }
@@ -43,7 +43,6 @@ impl Inner {
         });
 
         Inner {
-            _consumer_thread: consumer_thread,
             update_ch: update_sender,
             items: HashMap::new(),
         }
@@ -61,10 +60,7 @@ impl Inner {
         if let Some(item) = self.items.get(id) {
             Ok(item.metadata.clone())
         } else {
-            Err(Error::Access(format!(
-                "Download with id {} does not exist",
-                id
-            )))
+            Err(anyhow!("Download with id {} does not exist", id))
         }
     }
 
@@ -96,12 +92,13 @@ impl Inner {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn edit(&mut self, id: &Uuid) -> Result<MutexGuard<HttpDownload>> {
         if let Some(item) = self.items.get_mut(id) {
             let guard = item.download.try_lock()?;
             Ok(guard)
         } else {
-            Err(Error::Access(format!("Download with id {} not found", id)))
+            Err(anyhow!("Download with id {} not found", id))
         }
     }
 
@@ -109,12 +106,12 @@ impl Inner {
         if let Some(item) = self.items.get_mut(id) {
             let update_ch = self.update_ch.clone();
             if item.is_locked() {
-                return Err(Error::Access("Download is already locked, probably running already or locked up by pending operation!".to_owned()));
+                return Err(anyhow!("Download is already locked, probably running already or locked up by pending operation!"));
             }
             item.run(update_ch, resume);
             Ok(())
         } else {
-            Err(Error::Access(format!("Download with id {} not found", id)))
+            Err(anyhow!("Download with id {} not found", id))
         }
     }
 
@@ -124,7 +121,7 @@ impl Inner {
             log::info!("Stopping download {}", id);
             item.stop()
         } else {
-            Err(Error::Access(format!("Download with id {} not found", id)))
+            Err(anyhow!("Download with id {} not found", id))
         }
     }
 
