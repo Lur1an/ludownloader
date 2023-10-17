@@ -7,9 +7,10 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use self::inner::Inner;
+use self::inner::ManagerInner;
 
-use super::DownloadMetadata;
+use super::observer::{DownloadObserver, DownloadUpdateBuffer};
+use super::{DownloadMetadata, Subscribers};
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -22,17 +23,27 @@ pub trait UpdateConsumer {
 /// Internally it uses a RwLock to allow for concurrent access,
 /// this exposes a thread-safe interface.
 /// This struct is supposed to be cloned as it uses an Arc internally.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct DownloadManager {
-    inner: Arc<RwLock<Inner>>,
+    inner: Arc<RwLock<ManagerInner>>,
+    subscribers: Subscribers,
+    pub observer: DownloadObserver,
 }
 
 impl DownloadManager {
     /// The update_consumer is placed in a separate thread and will receive all updates from all downloads.
-    pub fn new(update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
-        let inner = Arc::new(RwLock::new(Inner::new(update_consumer)));
+    pub async fn new() -> Self {
+        let observer = DownloadObserver::new();
+        let buffer = DownloadUpdateBuffer::new();
+        buffer.add_subscriber(observer.clone()).await;
+        let subscribers = buffer.subscribers.clone();
+        let inner = Arc::new(RwLock::new(ManagerInner::new(buffer)));
 
-        Self { inner }
+        Self {
+            inner,
+            subscribers,
+            observer,
+        }
     }
 
     pub async fn start(&self, id: &Uuid) -> Result<()> {
@@ -62,17 +73,19 @@ impl DownloadManager {
 
     pub async fn get_metadata(&self, id: &Uuid) -> Result<DownloadMetadata> {
         let inner = self.inner.read().await;
-        inner.get_metadata(id)
+        inner.get_metadata(id).await
     }
 
     pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
         let inner = self.inner.read().await;
-        inner.get_metadata_all()
+        inner.get_metadata_all().await
     }
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
         let mut inner = self.inner.write().await;
-        inner.add(download)
+        let id = inner.add(download);
+        self.observer.track(id, download::State::Paused(0)).await;
+        id
     }
 
     pub async fn delete(&self, id: &Uuid, delete_file: bool) -> Result<()> {
@@ -80,7 +93,7 @@ impl DownloadManager {
         let _ = inner.stop(id); // ignore error
         if let Some(item) = inner.remove(id) {
             if delete_file {
-                let file_path = item.metadata.file_path;
+                let file_path = item.get_metadata().await.file_path;
                 if let Err(e) = tokio::fs::remove_file(file_path).await {
                     log::warn!(
                         "Couldn't delete file for httpdownload after removing from manager: {}",
@@ -88,6 +101,7 @@ impl DownloadManager {
                     );
                 };
             }
+            self.observer.untrack(id).await
         };
         Ok(())
     }
@@ -106,7 +120,7 @@ mod test {
 
     #[test(tokio::test)]
     async fn start_stop_delete_download() -> Test<()> {
-        let manager = DownloadManager::default();
+        let manager = DownloadManager::new().await;
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         let download_path = download.file_path();
         let id = manager.add(download).await;

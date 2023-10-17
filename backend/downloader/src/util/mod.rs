@@ -51,6 +51,7 @@ pub fn supports_byte_ranges(headers: &HeaderMap) -> bool {
     }
 }
 
+#[cfg(test)]
 pub async fn setup_test_download(url_str: &str) -> anyhow::Result<(HttpDownload, TempDir)> {
     let tmp_dir = TempDir::new()?;
     let tmp_path = tmp_dir.path().to_owned();

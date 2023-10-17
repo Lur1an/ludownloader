@@ -12,7 +12,7 @@ use crate::util::HALF_SECOND;
 use super::{
     download::{self, DownloadUpdate, State},
     manager::UpdateConsumer,
-    DownloadUpdateBatchSubscriber, Subscribers,
+    DownloadUpdateSubscriber, Subscribers,
 };
 
 /// This struct is responsible for keeping the state of all running downloads
@@ -50,10 +50,14 @@ impl DownloadObserver {
     pub async fn track(&self, id: Uuid, state: download::State) {
         self.state.write().await.insert(id, state);
     }
+
+    pub async fn untrack(&self, id: &Uuid) {
+        self.state.write().await.remove(id);
+    }
 }
 
 #[async_trait]
-impl DownloadUpdateBatchSubscriber for DownloadObserver {
+impl DownloadUpdateSubscriber for DownloadObserver {
     async fn update(&self, updates: &[(Uuid, download::State)]) {
         log::info!("Updating inner state for DownloadObserver, acquiring lock...");
         let mut guard = self.state.write().await;
@@ -78,13 +82,13 @@ impl DownloadUpdateBatchSubscriber for DownloadObserver {
 /// all updates from the Manager and shares a State-Map with a Mutex we'd risk filling up the
 /// buffer and locking up everything if we read too much from the Observer. This middle man never
 /// blocks during the consumption of updates, it creates an Arc<[T]> of the aggregated state that is sent in a non-blocking manner to all subscribers that then will have to consume the updates
-pub struct DownloadUpdatePublisher {
+pub struct DownloadUpdateBuffer {
     pub subscribers: Subscribers,
     last_flush: Instant,
     cache: HashMap<Uuid, State>,
 }
 
-impl DownloadUpdatePublisher {
+impl DownloadUpdateBuffer {
     pub fn new() -> Self {
         Self {
             subscribers: Arc::new(Mutex::new(Vec::new())),
@@ -94,14 +98,14 @@ impl DownloadUpdatePublisher {
     }
     pub async fn add_subscriber(
         &self,
-        subscriber: impl DownloadUpdateBatchSubscriber + Send + 'static + Sync,
+        subscriber: impl DownloadUpdateSubscriber + Send + 'static + Sync,
     ) {
         let mut guard = self.subscribers.lock().await;
         guard.push(Arc::new(subscriber));
     }
 }
 
-impl UpdateConsumer for DownloadUpdatePublisher {
+impl UpdateConsumer for DownloadUpdateBuffer {
     fn consume(&mut self, update: DownloadUpdate) {
         let flush = self.last_flush.elapsed() > HALF_SECOND
             && !matches!(update.state, State::Running { .. });

@@ -2,10 +2,10 @@ use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
 use crate::httpdownload::DownloadMetadata;
 
 use anyhow::anyhow;
+use futures_util::future::join_all;
 use std::collections::HashMap;
 use std::process::exit;
-use tokio::sync::MutexGuard;
-use tokio::{sync::mpsc, task::JoinHandle};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use super::item::DownloaderItem;
@@ -18,18 +18,18 @@ impl UpdateConsumer for () {
 }
 
 #[derive(Debug)]
-pub struct Inner {
+pub struct ManagerInner {
     pub update_ch: mpsc::Sender<DownloadUpdate>,
     pub items: HashMap<Uuid, DownloaderItem>,
 }
 
-impl Default for Inner {
+impl Default for ManagerInner {
     fn default() -> Self {
-        Inner::new(())
+        ManagerInner::new(())
     }
 }
 
-impl Inner {
+impl ManagerInner {
     pub fn new(mut update_consumer: impl UpdateConsumer + Send + Sync + 'static) -> Self {
         let (update_sender, mut update_recv) = mpsc::channel::<DownloadUpdate>(1000);
         log::info!("Spawning update consumer task");
@@ -38,11 +38,11 @@ impl Inner {
                 update_consumer.consume(update);
             }
             log::warn!("Update channel closed, last update_sender has been dropped");
-            log::error!("Download update consumer thread should live as long as the program, so this should never happen.");
+            log::error!("Download update consumer thread should live as long as the program, so this should never happen unless the program is terminating.");
             exit(1);
         });
 
-        Inner {
+        ManagerInner {
             update_ch: update_sender,
             items: HashMap::new(),
         }
@@ -56,20 +56,21 @@ impl Inner {
         id
     }
 
-    pub fn get_metadata(&self, id: &Uuid) -> Result<DownloadMetadata> {
+    pub async fn get_metadata(&self, id: &Uuid) -> Result<DownloadMetadata> {
         if let Some(item) = self.items.get(id) {
-            Ok(item.metadata.clone())
+            Ok(item.download.read().await.get_metadata())
         } else {
             Err(anyhow!("Download with id {} does not exist", id))
         }
     }
 
-    pub fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
-        let mut result = Vec::with_capacity(self.items.len());
-        for item in self.items.values() {
-            result.push(item.metadata.clone());
-        }
-        result
+    pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
+        join_all(
+            self.items
+                .values()
+                .map(|item| async move { item.download.read().await.get_metadata() }),
+        )
+        .await
     }
 
     pub fn start_all(&mut self) {
@@ -89,16 +90,6 @@ impl Inner {
         for (id, item) in self.items.iter_mut() {
             log::info!("Stopping download: {}", id);
             let _ = item.stop();
-        }
-    }
-
-    #[allow(dead_code)]
-    pub async fn edit(&mut self, id: &Uuid) -> Result<MutexGuard<HttpDownload>> {
-        if let Some(item) = self.items.get_mut(id) {
-            let guard = item.download.try_lock()?;
-            Ok(guard)
-        } else {
-            Err(anyhow!("Download with id {} not found", id))
         }
     }
 

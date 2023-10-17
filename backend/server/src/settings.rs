@@ -30,7 +30,6 @@ pub struct SettingManager {
 
 fn default_settings_path() -> PathBuf {
     let home_dir = home_dir().unwrap_or_default();
-
     home_dir.join(".ludownloader/settings.yaml")
 }
 
@@ -49,10 +48,6 @@ impl SettingManager {
 
     pub async fn read(&self) -> RwLockReadGuard<Settings> {
         self.inner.read().await
-    }
-
-    pub async fn try_read(&self) -> Option<RwLockReadGuard<Settings>> {
-        self.inner.try_read().ok()
     }
 
     pub async fn write(&self, settings: Settings) {
