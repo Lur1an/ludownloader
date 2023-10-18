@@ -4,7 +4,7 @@ use crate::httpdownload::manager::Result;
 use crate::httpdownload::DownloadMetadata;
 use anyhow::anyhow;
 use std::sync::Arc;
-use tokio::sync::{mpsc, oneshot, RwLock};
+use tokio::sync::{mpsc, oneshot, Notify, RwLock};
 
 /// Wrapper over HttpDownload to allow multi-threaded managing
 /// TODO: add packages to allow batching download commands
@@ -12,14 +12,14 @@ use tokio::sync::{mpsc, oneshot, RwLock};
 pub struct DownloaderItem {
     pub(super) download: Arc<RwLock<HttpDownload>>,
     /// This sender contains the channel to notify the thread to stop the download function
-    tx: Option<oneshot::Sender<()>>,
+    notifier: Option<Arc<Notify>>,
 }
 
 impl DownloaderItem {
     pub fn new(download: HttpDownload) -> Self {
         DownloaderItem {
             download: Arc::new(RwLock::new(download)),
-            tx: None,
+            notifier: None,
         }
     }
 
@@ -28,7 +28,8 @@ impl DownloaderItem {
     }
 
     pub fn run(&mut self, update_ch: mpsc::Sender<DownloadUpdate>, resume: bool) {
-        let (tx, rx) = oneshot::channel();
+        let notifier = Arc::new(Notify::new());
+        self.notifier = Some(notifier.clone());
         let download_arc = self.download.clone();
         tokio::spawn(async move {
             let download = download_arc.read().await;
@@ -49,7 +50,7 @@ impl DownloaderItem {
                 }
             };
             let update = tokio::select! {
-                _ = rx => {
+                _ = notifier.notified() => {
                     log::info!("Stopping download: {}", download.id);
                     let downloaded_bytes = download.get_bytes_on_disk().await;
                     DownloadUpdate {
@@ -81,7 +82,6 @@ impl DownloaderItem {
             };
             let _ = update_ch.send(update).await;
         });
-        self.tx = Some(tx);
     }
 
     pub async fn get_metadata(&self) -> DownloadMetadata {
@@ -89,11 +89,11 @@ impl DownloaderItem {
     }
 
     pub fn stop(&mut self) -> Result<()> {
-        if let Some(tx) = self.tx.take() {
-            tx.send(())
-                .map_err(|e| anyhow!("Error sending stop signal: {:?}", e))
+        if let Some(notifier) = self.notifier.take() {
+            notifier.notify_one();
         } else {
-            Err(anyhow!("Can't stop a download that is not running"))
+            anyhow::bail!("Can't stop a download that is not running");
         }
+        Ok(())
     }
 }
