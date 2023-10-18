@@ -66,11 +66,7 @@ pub struct HttpDownload {
 }
 
 impl HttpDownload {
-    pub async fn start(
-        &self,
-        stop_ch: oneshot::Receiver<()>,
-        update_ch: mpsc::Sender<DownloadUpdate>,
-    ) -> Result<u64> {
+    pub async fn start(&self, update_ch: mpsc::Sender<DownloadUpdate>) -> Result<u64> {
         let resp = self
             .client
             .get(self.url.as_ref())
@@ -83,19 +79,14 @@ impl HttpDownload {
             self.file_path()
         );
         let file_handler = File::create(self.file_path()).await?;
-        self.progress(resp, file_handler, stop_ch, update_ch, 0)
-            .await
+        self.progress(resp, file_handler, update_ch, 0).await
     }
 
     pub fn file_path(&self) -> PathBuf {
         self.directory.join(&self.filename)
     }
 
-    pub async fn resume(
-        &self,
-        stop_ch: oneshot::Receiver<()>,
-        update_ch: mpsc::Sender<DownloadUpdate>,
-    ) -> Result<u64> {
+    pub async fn resume(&self, update_ch: mpsc::Sender<DownloadUpdate>) -> Result<u64> {
         let bytes_on_disk = self.get_bytes_on_disk().await;
         if bytes_on_disk == self.content_length {
             log::warn!(
@@ -110,7 +101,7 @@ impl HttpDownload {
                 self.url
             );
             log::info!("Starting from scratch: {}", self.url);
-            return self.start(stop_ch, update_ch).await;
+            return self.start(update_ch).await;
         }
         let file_handler = OpenOptions::new()
             .write(true)
@@ -125,7 +116,7 @@ impl HttpDownload {
             .header(RANGE, format!("bytes={}-", bytes_on_disk))
             .send()
             .await?;
-        self.progress(resp, file_handler, stop_ch, update_ch, bytes_on_disk)
+        self.progress(resp, file_handler, update_ch, bytes_on_disk)
             .await
     }
 
@@ -177,46 +168,29 @@ impl HttpDownload {
         &self,
         resp: Response,
         mut file_handler: File,
-        mut stop_ch: oneshot::Receiver<()>,
         update_ch: mpsc::Sender<DownloadUpdate>,
         mut downloaded_bytes: u64,
     ) -> Result<u64> {
         let mut stream = resp.bytes_stream();
         let mut last_update = std::time::Instant::now();
-        let mut last_bytes_downloaded = 0u64;
+        let mut previous_bytes = 0u64;
         while let Some(chunk) = stream.next().await {
             let item = chunk?;
             let bytes_written = file_handler.write(&item).await? as u64;
             downloaded_bytes += bytes_written;
-            last_bytes_downloaded += bytes_written;
+            previous_bytes += bytes_written;
             let elapsed = last_update.elapsed();
             if elapsed > HALF_SECOND {
                 let _ = update_ch.try_send(DownloadUpdate {
                     id: self.id,
                     state: State::Running {
                         bytes_downloaded: downloaded_bytes,
-                        bytes_per_second: last_bytes_downloaded
-                            / last_update.elapsed().as_millis() as u64
+                        bytes_per_second: previous_bytes / last_update.elapsed().as_millis() as u64
                             * 1000,
                     },
                 });
                 last_update = std::time::Instant::now();
-                last_bytes_downloaded = 0u64;
-            }
-            match stop_ch.try_recv() {
-                Ok(_) => {
-                    log::info!("Download stop signal received for: {}", self.url);
-                    return Ok(downloaded_bytes);
-                }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Closed) => {
-                    log::error!(
-                        "Download stop signal channel closed for: {}, this shouldn't happen!",
-                        self.url
-                    );
-                    log::info!("Stopping download because of channel error: {}", self.url);
-                    return Err(Error::ChannelDrop(downloaded_bytes, self.url.clone()));
-                }
+                previous_bytes = 0u64;
             }
         }
         if downloaded_bytes < self.content_length {
@@ -287,9 +261,8 @@ mod test {
         // given
         let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         // when
-        let (_tx, rx) = tokio::sync::oneshot::channel();
         let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
-        let downloaded_bytes = download.start(rx, update_sender).await?;
+        let downloaded_bytes = download.start(update_sender).await?;
         // then
         assert_eq!(
             download.content_length,
@@ -313,9 +286,8 @@ mod test {
         let (mut download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
         download.config = config;
         // when
-        let (_tx, rx) = tokio::sync::oneshot::channel();
         let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
-        let downloaded_bytes = download.start(rx, update_sender).await?;
+        let downloaded_bytes = download.start(update_sender).await?;
         // then
         assert_eq!(
             download.content_length,
@@ -326,41 +298,6 @@ mod test {
             downloaded_bytes,
             download.content_length,
             "The downloaded bytes need to be equal to the content_length when the download is finished"
-        );
-        Ok(())
-    }
-
-    #[test(tokio::test)]
-    async fn download_can_be_stopped_and_resumed_test() -> Test<()> {
-        // setup
-        let (download, _tmp_dir) = setup_test_download(TEST_DOWNLOAD_URL).await?;
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        let content_length = download.content_length;
-        let (update_sender, _) = mpsc::channel::<DownloadUpdate>(1000);
-        let download = Arc::new(download);
-        let download_clone = download.clone();
-        let sender_clone = update_sender.clone();
-        let handle = tokio::spawn(async move { download_clone.start(rx, sender_clone).await });
-        tx.send(()).expect("Message needs to be sent");
-        let join_result = handle.await;
-        let downloaded_bytes = join_result??;
-        assert!(
-            downloaded_bytes < content_length,
-            "The downloaded bytes need to be less than the content_length when the download is stopped prematurely"
-        );
-        // Start the download again
-        let (_tx, rx) = tokio::sync::oneshot::channel();
-        let downloaded_bytes = download.resume(rx, update_sender).await?;
-        let bytes_on_disk = download.get_bytes_on_disk().await;
-        assert_eq!(
-            downloaded_bytes,
-            content_length,
-            "The downloaded bytes need to be equal to the content_length when the download is finished"
-        );
-        assert_eq!(
-            bytes_on_disk,
-            content_length,
-            "The bytes on disk need to be equal to the content_length when the download is finished"
         );
         Ok(())
     }

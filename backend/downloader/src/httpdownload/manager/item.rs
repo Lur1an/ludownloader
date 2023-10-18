@@ -39,42 +39,47 @@ impl DownloaderItem {
             );
 
             let update_ch_cl = update_ch.clone();
-            let download_result = if resume {
-                log::info!("Resuming download: {}", download.id);
-                download.resume(rx, update_ch).await
-            } else {
-                log::info!("Starting download: {}", download.id);
-                download.start(rx, update_ch).await
+            let download_task = async {
+                if resume {
+                    log::info!("Resuming download: {}", download.id);
+                    download.resume(update_ch_cl).await
+                } else {
+                    log::info!("Starting download: {}", download.id);
+                    download.start(update_ch_cl).await
+                }
             };
-
-            match download_result {
-                Ok(downloaded_bytes) => {
-                    let update = if downloaded_bytes == download.content_length {
-                        download::State::Complete
-                    } else {
-                        download::State::Paused(downloaded_bytes)
-                    };
-                    let _ = update_ch_cl
-                        .send(DownloadUpdate {
-                            id: download.id,
-                            state: update,
-                        })
-                        .await;
+            let update = tokio::select! {
+                _ = rx => {
+                    log::info!("Stopping download: {}", download.id);
+                    let downloaded_bytes = download.get_bytes_on_disk().await;
+                    DownloadUpdate {
+                        id: download.id,
+                        state: download::State::Paused(downloaded_bytes),
+                    }
                 }
-                Err(e) => {
-                    log::error!(
-                        "Error encountered while downloading {}, Error: {}",
-                        download.id,
-                        e
-                    );
-                    let _ = update_ch_cl
-                        .send(DownloadUpdate {
-                            id: download.id,
-                            state: download::State::Error(format!("{}", e)),
-                        })
-                        .await;
+                download_result = download_task => {
+                    match download_result {
+                        Ok(_) => {
+                            DownloadUpdate {
+                                id: download.id,
+                                state: download::State::Complete,
+                            }
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Error encountered while downloading {}, Error: {}",
+                                download.id,
+                                e
+                            );
+                            DownloadUpdate {
+                                id: download.id,
+                                state: download::State::Error(format!("{}", e)),
+                            }
+                        }
+                    }
                 }
-            }
+            };
+            let _ = update_ch.send(update).await;
         });
         self.tx = Some(tx);
     }
