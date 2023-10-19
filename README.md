@@ -3,7 +3,7 @@ A download manager with Rust backend with a simple and open API to allow multipl
 
 ---
 ## Downloader:
-- [x] Downloading files
+- [x] Downloading files concurrently, stopping/starting downloads, tracking download speed & progress
 - [ ] gRPC server.
 - [ ] Download-packaging
 - [ ] Persistence layer with SQLite
