@@ -1,0 +1,19 @@
+syntax = "proto3";
+package ludownloader;
+
+service HttpDownloadManager {
+    rpc Create (CreateDownloadRequest) returns (DownloadMetadata);
+}
+
+message CreateDownloadRequest {
+    string url = 1;
+    optional string file_path = 2;
+}
+
+message DownloadMetadata {
+    bytes id = 1;
+    string url = 2;
+    string file_path = 3;
+    uint64 download_size = 4;
+}
+

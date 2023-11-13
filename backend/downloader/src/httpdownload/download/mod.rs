@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
-use tokio::sync::oneshot::error::TryRecvError;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::mpsc::Sender;
 
 use crate::util::{file_size, mb, supports_byte_ranges, HALF_SECOND};
 
@@ -24,8 +23,6 @@ pub enum Error {
     Request(#[from] reqwest::Error),
     #[error("Content length not provided for url: '{0}'")]
     MissingContentLength(Url),
-    #[error("Prematurely dropped channel for download with url: '{0}', downloaded bytes before drop: '{1}'")]
-    ChannelDrop(u64, Url),
     #[error("Download was already finished, downloaded bytes: '{0}'")]
     DownloadComplete(u64),
     #[error("Download req did not yield 200, instead: '{0}', body: '{1}'")]
@@ -66,7 +63,7 @@ pub struct HttpDownload {
 }
 
 impl HttpDownload {
-    pub async fn start(&self, update_ch: mpsc::Sender<DownloadUpdate>) -> Result<u64> {
+    pub async fn start(&self, update_ch: Sender<DownloadUpdate>) -> Result<u64> {
         let resp = self
             .client
             .get(self.url.as_ref())
@@ -86,7 +83,7 @@ impl HttpDownload {
         self.directory.join(&self.filename)
     }
 
-    pub async fn resume(&self, update_ch: mpsc::Sender<DownloadUpdate>) -> Result<u64> {
+    pub async fn resume(&self, update_ch: Sender<DownloadUpdate>) -> Result<u64> {
         let bytes_on_disk = self.get_bytes_on_disk().await;
         if bytes_on_disk == self.content_length {
             log::warn!(
@@ -168,7 +165,7 @@ impl HttpDownload {
         &self,
         resp: Response,
         mut file_handler: File,
-        update_ch: mpsc::Sender<DownloadUpdate>,
+        update_ch: Sender<DownloadUpdate>,
         mut downloaded_bytes: u64,
     ) -> Result<u64> {
         let mut stream = resp.bytes_stream();
@@ -214,7 +211,7 @@ impl HttpDownload {
             id: self.id,
             url: self.url.to_string(),
             file_path: self.file_path(),
-            content_length: self.content_length,
+            download_size: self.content_length,
         }
     }
 
@@ -226,7 +223,6 @@ impl HttpDownload {
 #[cfg(test)]
 mod test {
     use std::error::Error;
-    use std::sync::Arc;
     use test_log::test;
 
     use pretty_assertions::assert_eq;

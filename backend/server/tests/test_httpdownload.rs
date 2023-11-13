@@ -4,10 +4,7 @@ use async_trait::async_trait;
 use downloader::httpdownload::{download, DownloadMetadata};
 use reqwest::{Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
-use server::{
-    api::{DownloadData, DownloadState},
-    launch_app,
-};
+use server::launch_app;
 use test_context::{test_context, AsyncTestContext};
 use test_log::test;
 use uuid::Uuid;
@@ -47,7 +44,7 @@ async fn test_download_crud(Ctx { client, server_url }: &mut Ctx) {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::CREATED);
     let metadata: DownloadMetadata = resp.json().await.unwrap();
-    assert_eq!(metadata.content_length, 1048576000);
+    assert_eq!(metadata.download_size, 1048576000);
     let incorrect_url = "hgesdg98wq19".to_owned();
     let resp = client
         .post(server_url.join("/api/v1/httpdownload").unwrap())

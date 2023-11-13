@@ -14,7 +14,7 @@ pub struct DownloadMetadata {
     pub id: Uuid,
     pub url: String,
     pub file_path: PathBuf,
-    pub content_length: u64,
+    pub download_size: u64,
 }
 
 /// This trait is used to subscribe to state updates of downloads
