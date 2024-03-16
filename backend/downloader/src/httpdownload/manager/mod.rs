@@ -1,16 +1,6 @@
-mod inner;
-mod item;
-
-use crate::httpdownload::download;
+use super::DownloadMetadata;
 use crate::httpdownload::download::{DownloadUpdate, HttpDownload};
-use std::sync::Arc;
-use tokio::sync::RwLock;
 use uuid::Uuid;
-
-use self::inner::ManagerInner;
-
-use super::observer::{DownloadObserver, DownloadUpdateBuffer};
-use super::{DownloadMetadata, Subscribers};
 
 pub type Result<T> = anyhow::Result<T>;
 
@@ -24,93 +14,54 @@ pub trait UpdateConsumer {
 /// this exposes a thread-safe interface.
 /// This struct is supposed to be cloned as it uses an Arc internally.
 #[derive(Clone)]
-pub struct DownloadManager {
-    inner: Arc<RwLock<ManagerInner>>,
-    subscribers: Subscribers,
-    pub observer: DownloadObserver,
-}
+pub struct DownloadManager {}
 
 impl DownloadManager {
-    /// The update_consumer is placed in a separate thread and will receive all updates from all downloads.
     pub async fn new() -> Self {
-        let observer = DownloadObserver::new();
-        let buffer = DownloadUpdateBuffer::new();
-        buffer.add_subscriber(observer.clone()).await;
-        let subscribers = buffer.subscribers.clone();
-        let inner = Arc::new(RwLock::new(ManagerInner::new(buffer)));
-
-        Self {
-            inner,
-            subscribers,
-            observer,
-        }
+        Self {}
     }
 
     pub async fn start(&self, id: &Uuid) -> Result<()> {
-        let mut inner = self.inner.write().await;
-        inner.run(id, false)
+        todo!()
     }
 
     pub async fn resume(&self, id: &Uuid) -> Result<()> {
-        let mut inner = self.inner.write().await;
-        inner.run(id, true)
+        todo!()
     }
 
     pub async fn stop(&self, id: &Uuid) -> Result<()> {
-        let mut inner = self.inner.write().await;
-        inner.stop(id)
+        todo!()
     }
 
     pub async fn start_all(&self) {
-        let mut inner = self.inner.write().await;
-        inner.start_all()
+        todo!()
     }
 
     pub async fn stop_all(&self) {
-        let mut inner = self.inner.write().await;
-        inner.stop_all()
+        todo!()
     }
 
     pub async fn get_metadata(&self, id: &Uuid) -> Result<DownloadMetadata> {
-        let inner = self.inner.read().await;
-        inner.get_metadata(id).await
+        todo!()
     }
 
     pub async fn get_metadata_all(&self) -> Vec<DownloadMetadata> {
-        let inner = self.inner.read().await;
-        inner.get_metadata_all().await
+        todo!()
     }
 
     pub async fn add(&self, download: HttpDownload) -> Uuid {
-        let mut inner = self.inner.write().await;
-        let id = inner.add(download);
-        self.observer.track(id, download::State::Paused(0)).await;
-        id
+        todo!()
     }
 
     pub async fn delete(&self, id: &Uuid, delete_file: bool) -> Result<()> {
-        let mut inner = self.inner.write().await;
-        let _ = inner.stop(id); // ignore error
-        if let Some(item) = inner.remove(id) {
-            if delete_file {
-                let file_path = item.get_metadata().await.file_path;
-                if let Err(e) = tokio::fs::remove_file(file_path).await {
-                    log::warn!(
-                        "Couldn't delete file for httpdownload after removing from manager: {}",
-                        e
-                    );
-                };
-            }
-            self.observer.untrack(id).await
-        };
-        Ok(())
+        todo!()
     }
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::util::{file_size, setup_test_download};
+    use crate::util::{file_size, test::setup_test_download};
     use test_log::test;
     use tokio::time;
 

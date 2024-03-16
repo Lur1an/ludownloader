@@ -1,10 +1,7 @@
 use reqwest::header::HeaderMap;
-use reqwest::{header, Client, Url};
+use reqwest::{header, Url};
 use std::error::Error;
 use std::path::Path;
-use tempfile::TempDir;
-
-use crate::httpdownload::download::HttpDownload;
 
 /// Extracts filesize from path, if file does not exist or read fails the function returns 0
 pub async fn file_size(fpath: &Path) -> u64 {
@@ -15,6 +12,7 @@ pub async fn file_size(fpath: &Path) -> u64 {
 }
 pub const HALF_SECOND: std::time::Duration = std::time::Duration::from_millis(500);
 pub type TestResult<T> = std::result::Result<T, Box<dyn Error>>;
+
 /**
  * Parses the filename from the download URL
  * Returns None if there is no filename or if url.path_segments() fails
@@ -52,23 +50,25 @@ pub fn supports_byte_ranges(headers: &HeaderMap) -> bool {
 }
 
 #[cfg(test)]
-pub async fn setup_test_download(url_str: &str) -> anyhow::Result<(HttpDownload, TempDir)> {
-    let tmp_dir = TempDir::new()?;
-    let tmp_path = tmp_dir.path().to_owned();
-    let url = Url::parse(url_str)?;
-    let filename = parse_filename(&url).unwrap().to_string();
-    let client = Client::new();
-    let download = HttpDownload::create(url, tmp_path, filename, client, None).await?;
-    Ok((download, tmp_dir))
-}
+pub mod test {
+    use crate::httpdownload::download::HttpDownload;
 
-#[cfg(test)]
-mod test {
     use super::*;
     use pretty_assertions::assert_eq;
-    use reqwest::header::HeaderValue;
-    use std::{error::Error, fs::File, io::Write};
+    use reqwest::{header::HeaderValue, Client};
     use tempfile::TempDir;
+    use tokio::{fs::File, io::AsyncWriteExt};
+
+    pub async fn setup_test_download(url_str: &str) -> anyhow::Result<(HttpDownload, TempDir)> {
+        let tmp_dir = TempDir::new()?;
+        let tmp_path = tmp_dir.path().to_owned();
+        let url = Url::parse(url_str)?;
+        let filename = parse_filename(&url).unwrap().to_string();
+        let client = Client::new();
+        let download = HttpDownload::create(url, tmp_path, filename, client, None).await?;
+        anyhow::Ok((download, tmp_dir))
+    }
+
     #[test]
     fn supports_bytes_test() {
         // Given
@@ -96,7 +96,7 @@ mod test {
     }
 
     #[test]
-    fn parse_filename_test() -> Result<(), Box<dyn Error>> {
+    fn parse_filename_test() -> anyhow::Result<()> {
         // Result<(), Box<dyn Error>> success
         let url = Url::parse("https://somewebsite.biz/api/v1/big-ass-file.fantasy")?;
         let filename = parse_filename(&url).unwrap();
@@ -108,7 +108,7 @@ mod test {
     }
 
     #[tokio::test]
-    async fn file_size_retrieval_test() -> Result<(), Box<dyn Error>> {
+    async fn file_size_retrieval_test() -> anyhow::Result<()> {
         // Setup
         let tmp_dir = TempDir::new()?;
         let tmp_path = tmp_dir.path();
@@ -116,16 +116,16 @@ mod test {
         let fname = parse_filename(&url).unwrap();
         let fpath = tmp_path.join(Path::new(fname));
         // Create file and check that it's empty (size == 0)
-        let mut file_handler = File::create(&fpath).unwrap();
+        let mut file_handler = File::create(&fpath).await?;
         assert_eq!(
             file_size(fpath.as_path()).await,
             0,
             "Newly created file should have 0 Bytes!"
         );
         // Write some bytes to the buffer
-        let bytes: u64 = file_handler.write(b"b")? as u64;
+        let bytes: u64 = file_handler.write(b"b").await? as u64;
         // Flush the buffer to the file
-        file_handler.flush()?;
+        file_handler.flush().await?;
         // Assert that the file_size function retrieves the exact number of bytes written
         assert_eq!(
             file_size(&fpath).await,

@@ -1,5 +1,6 @@
-mod settings;
 use std::net::TcpListener;
+
+tonic::include_proto!("ludownloader");
 
 pub async fn launch_app(listener: TcpListener) {
     // let httpdownload_routes = routes().with_state(state);

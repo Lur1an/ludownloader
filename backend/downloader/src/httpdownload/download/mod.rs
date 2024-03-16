@@ -9,7 +9,7 @@ use tokio::fs::{File, OpenOptions};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc::Sender;
 
-use crate::util::{file_size, mb, supports_byte_ranges, HALF_SECOND};
+use crate::util::{file_size, supports_byte_ranges, HALF_SECOND};
 
 use self::config::HttpDownloadConfig;
 
@@ -25,8 +25,6 @@ pub enum Error {
     MissingContentLength(Url),
     #[error("Download was already finished, downloaded bytes: '{0}'")]
     DownloadComplete(u64),
-    #[error("Download req did not yield 200, instead: '{0}', body: '{1}'")]
-    DownloadNotOk(reqwest::StatusCode, String),
     #[error("Download ended before completion, downloaded bytes: '{0}'")]
     StreamEndedBeforeCompletion(u64),
 }
@@ -52,14 +50,14 @@ pub struct DownloadUpdate {
 
 #[derive(Debug, Clone)]
 pub struct HttpDownload {
-    pub url: Url,
     pub id: uuid::Uuid,
+    pub url: Url,
     pub directory: PathBuf,
     pub filename: String,
     pub config: HttpDownloadConfig,
-    pub content_length: u64,
-    pub supports_byte_ranges: bool,
     pub client: Client,
+    content_length: u64,
+    supports_byte_ranges: bool,
 }
 
 impl HttpDownload {
@@ -70,10 +68,10 @@ impl HttpDownload {
             .headers(self.config.headers.clone())
             .send()
             .await?;
-        log::info!(
-            "Starting new download for url {}, creating file at {:?}",
-            self.url,
-            self.file_path()
+        tracing::info!(
+            url = ?self.url,
+            file = ?self.file_path(),
+            "Starting new download",
         );
         let file_handler = File::create(self.file_path()).await?;
         self.progress(resp, file_handler, update_ch, 0).await
@@ -86,20 +84,21 @@ impl HttpDownload {
     pub async fn resume(&self, update_ch: Sender<DownloadUpdate>) -> Result<u64> {
         let bytes_on_disk = self.get_bytes_on_disk().await;
         if bytes_on_disk == self.content_length {
-            log::warn!(
-                "Tried downloading a file that was already completely downloaded: {}",
-                self.url
+            tracing::warn!(
+                ?self,
+                "Tried downloading a file that was already completely downloaded",
             );
             return Err(Error::DownloadComplete(bytes_on_disk));
         }
         if !self.supports_byte_ranges {
-            log::warn!(
-                "Tried resuming a download that doesn't support byte ranges: {}",
-                self.url
+            tracing::warn!(
+                ?self,
+                "Tried resuming a download that doesn't support byte ranges",
             );
-            log::info!("Starting from scratch: {}", self.url);
+            tracing::info!(?self, "Starting from scratch");
             return self.start(update_ch).await;
         }
+
         let file_handler = OpenOptions::new()
             .write(true)
             .append(true)
@@ -133,16 +132,7 @@ impl HttpDownload {
             .headers(config.headers.clone())
             .send()
             .await?;
-
-        let status = resp.status();
-        match status {
-            reqwest::StatusCode::OK => {}
-            _ => {
-                let body = resp.text().await.unwrap_or_default();
-                return Err(Error::DownloadNotOk(status, body));
-            }
-        };
-
+        resp.error_for_status_ref()?;
         let content_length = match resp.content_length() {
             Some(val) => Ok(val),
             None => Err(Error::MissingContentLength(url.clone())),
@@ -168,6 +158,7 @@ impl HttpDownload {
         update_ch: Sender<DownloadUpdate>,
         mut downloaded_bytes: u64,
     ) -> Result<u64> {
+        resp.error_for_status_ref()?;
         let mut stream = resp.bytes_stream();
         let mut last_update = std::time::Instant::now();
         let mut previous_bytes = 0u64;
@@ -191,18 +182,14 @@ impl HttpDownload {
             }
         }
         if downloaded_bytes < self.content_length {
-            log::error!(
-                "Download stream ended before completion, downloaded bytes: {}, content length: {}",
-                downloaded_bytes,
-                self.content_length
+            tracing::error!(
+                ?self,
+                ?downloaded_bytes,
+                "Download stream ended before completiont",
             );
             return Err(Error::StreamEndedBeforeCompletion(downloaded_bytes));
         }
-        log::info!(
-            "Download completed successfully: {}, {}MB",
-            self.url,
-            mb(downloaded_bytes)
-        );
+        tracing::info!(?self, "Download completed successfully",);
         Ok(downloaded_bytes)
     }
 
@@ -226,8 +213,9 @@ mod test {
     use test_log::test;
 
     use pretty_assertions::assert_eq;
+    use tokio::sync::mpsc;
 
-    use crate::util::{parse_filename, setup_test_download};
+    use crate::util::{parse_filename, test::setup_test_download};
 
     use super::*;
 
