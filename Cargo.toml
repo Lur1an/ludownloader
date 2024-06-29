@@ -1,6 +1,3 @@
 [workspace]
-members = [
-    "backend/downloader",
-    "backend/server",
-]
+members = ["lubit"]
 resolver = "2"

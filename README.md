@@ -3,11 +3,12 @@ A download manager with Rust backend with a simple and open API to allow multipl
 
 ---
 ## Downloader:
-- [x] Downloading files concurrently, stopping/starting downloads, tracking download speed & progress
+- [ ] Downloading files concurrently, stopping/starting downloads, tracking download speed & progress
+- [ ] Torrent Downloads
 - [ ] gRPC server.
 - [ ] Download-packaging
 - [ ] Persistence layer with SQLite
-- [ ] A way to manage multiple proxied `reqwest::Client` for Downloads
+- [ ] A way to manage multiple clients (different interfaces/proxies/settings) for Downloads
 - [ ] Premium download hoster implementations (e.g. rapidgator, uploaded, ...) on top of the HttpDownload module
 - [ ] Managing credentials
 - [ ] Module p2pdownload
