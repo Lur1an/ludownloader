@@ -1,44 +1,51 @@
 use compact_str::CompactString;
 use serde::{Deserialize, Serialize};
-use serde_bencode::de;
 use serde_bytes::ByteBuf;
-use std::io::{self, Read};
 
 #[derive(Debug, Deserialize)]
-struct Node(String, i64);
+pub struct Node(String, i64);
 
 #[derive(Debug, Deserialize)]
-struct File {
+pub struct File {
     pub path: Vec<CompactString>,
     pub length: i64,
     #[serde(default)]
     pub md5sum: Option<CompactString>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
-struct Info {
+pub struct Info {
     pub name: CompactString,
+    /// Concatenated SHA-1 hashes of every piece in the torrent
     pub pieces: ByteBuf,
     #[serde(rename = "piece length")]
     pub piece_length: i64,
     #[serde(default)]
-    pub md5sum: Option<CompactString>,
-    #[serde(default)]
-    pub length: Option<i64>,
-    #[serde(default)]
-    pub files: Option<Vec<File>>,
-    #[serde(default)]
     pub private: Option<u8>,
-    #[serde(default)]
-    pub path: Option<Vec<CompactString>>,
-    #[serde(default)]
-    #[serde(rename = "root hash")]
-    pub root_hash: Option<CompactString>,
+    #[serde(flatten)]
+    pub info_spec: InfoSpec,
 }
 
 #[derive(Debug, Deserialize)]
-struct Torrent {
+pub struct SingleInfo {
+    pub md5sum: Option<CompactString>,
+    pub length: u32,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DictionaryInfo {
+    pub files: Vec<File>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum InfoSpec {
+    Single(SingleInfo),
+    Dictionary(DictionaryInfo),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Torrent {
     pub info: Info,
     #[serde(default)]
     pub announce: Option<CompactString>,
@@ -50,19 +57,42 @@ struct Torrent {
     pub httpseeds: Option<Vec<CompactString>>,
     #[serde(default)]
     #[serde(rename = "announce-list")]
-    pub announce_list: Option<Vec<Vec<CompactString>>>,
-    #[serde(default)]
+    pub announce_list: Vec<Vec<CompactString>>,
     #[serde(rename = "creation date")]
-    pub creation_date: Option<i64>,
+    pub creation_date: Option<u32>,
     #[serde(rename = "comment")]
     pub comment: Option<CompactString>,
-    #[serde(default)]
     #[serde(rename = "created by")]
     pub created_by: Option<CompactString>,
 }
 
+impl Torrent {
+    pub fn info(&self) {
+        todo!()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum TrackerResponse {
+    Failed(FailedTrackerResponse),
+    Success(SuccessTrackerResponse),
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SuccessTrackerResponse {}
+
+#[derive(Debug, Deserialize)]
+pub struct FailedTrackerResponse {
+    #[serde(rename = "failure reason")]
+    pub failure_reason: CompactString,
+}
+
 #[cfg(test)]
 mod test {
+    use serde_bencode::de;
+    use tokio::net::TcpSocket;
+
     use super::*;
 
     #[tokio::test]
