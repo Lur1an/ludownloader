@@ -1,5 +1,5 @@
 use bendy::decoding::FromBencode;
-use bendy::encoding::ToBencode;
+use bendy::encoding::{AsString, ToBencode};
 use sha1::{Digest, Sha1};
 use std::str;
 
@@ -80,11 +80,10 @@ impl ToBencode for Info {
             }
             e.emit_pair(b"name", &self.name)?;
             e.emit_pair(b"piece length", self.piece_length)?;
-            e.emit_pair(b"pieces", &self.pieces)?;
-            e.emit_pair(
-                b"private",
-                if self.private.unwrap_or(false) { 1 } else { 0 },
-            )?;
+            e.emit_pair(b"pieces", AsString(&self.pieces))?;
+            if let Some(private) = self.private {
+                e.emit_pair(b"private", if private { 1 } else { 0 })?;
+            }
             Ok(())
         })
     }
@@ -394,14 +393,12 @@ mod test {
     use pretty_assertions::assert_eq;
 
     #[test]
-    fn test_fetch_torrent() {
+    fn decode_encode_torrent() {
         let torrent_file = std::fs::read("../resources/debian.torrent").unwrap();
         let meta_info = MetaInfo::from_bencode(&torrent_file).unwrap();
-        println!("{:?}", meta_info);
         let encoded = meta_info.to_bencode().unwrap();
-        let meta_info2 = MetaInfo::from_bencode(&encoded).unwrap();
-        //println!("CHECKING EQUALITY?");
-        //assert_eq!(meta_info, meta_info2);
-        //assert_eq!(torrent_file, encoded);
+        assert_eq!(torrent_file, encoded);
+        let meta_info_re_decoded = MetaInfo::from_bencode(&encoded).unwrap();
+        assert_eq!(meta_info, meta_info_re_decoded);
     }
 }
