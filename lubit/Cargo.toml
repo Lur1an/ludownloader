@@ -7,6 +7,7 @@ edition = "2021"
 bendy = { version = "0.3.3", features = ["serde"] }
 compact_str = { version = "0.7.1", features = ["serde"] }
 derive_builder = "0.20.0"
+pretty_assertions = "1.4.0"
 reqwest = { version = "0.12.5", features = ["json", "cookies", "gzip", "rustls-tls", "native-tls-vendored", "stream"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_bencode = "0.2.4"

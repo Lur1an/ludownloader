@@ -1,25 +1,114 @@
-use bendy::decoding::{Decoder, FromBencode};
+use bendy::decoding::FromBencode;
+use bendy::encoding::ToBencode;
 use sha1::{Digest, Sha1};
 use std::str;
 
-#[derive(Debug, Clone)]
-pub struct File<'a> {
-    pub path: Vec<&'a str>,
-    pub length: i64,
-    pub md5sum: Option<&'a str>,
+#[derive(Default, Debug, Clone, PartialEq)]
+pub struct CompactString(compact_str::CompactString);
+
+impl From<&str> for CompactString {
+    fn from(s: &str) -> Self {
+        CompactString(compact_str::CompactString::from(s))
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct Info<'a> {
-    pub name: &'a str,
+impl ToBencode for CompactString {
+    const MAX_DEPTH: usize = 0;
+
+    fn encode(
+        &self,
+        encoder: bendy::encoding::SingleItemEncoder,
+    ) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_str(self.0.as_str())
+    }
+}
+
+impl FromBencode for CompactString {
+    fn decode_bencode_object(
+        object: bendy::decoding::Object,
+    ) -> Result<Self, bendy::decoding::Error>
+    where
+        Self: Sized,
+    {
+        let bytes = object.try_into_bytes()?;
+        let str = str::from_utf8(bytes)?;
+        Ok(CompactString(compact_str::CompactString::from(str)))
+    }
+}
+
+impl AsRef<str> for CompactString {
+    fn as_ref(&self) -> &str {
+        self.0.as_str()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct File {
+    pub path: Vec<CompactString>,
+    pub length: i64,
+    pub md5sum: Option<CompactString>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Info {
+    pub name: CompactString,
     /// Concatenated SHA-1 hashes of every piece in the torrent
-    pub pieces: &'a [u8],
+    pub pieces: Vec<u8>,
     pub piece_length: i64,
     pub private: Option<bool>,
-    pub info_spec: InfoSpec<'a>,
+    pub info_spec: InfoSpec,
 }
 
-impl<'a> FromBencode for Info<'a> {
+impl ToBencode for Info {
+    const MAX_DEPTH: usize = 2;
+
+    fn encode(
+        &self,
+        encoder: bendy::encoding::SingleItemEncoder,
+    ) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            match &self.info_spec {
+                InfoSpec::Single(single) => {
+                    e.emit_pair(b"length", single.length)?;
+                    if let Some(md5sum) = &single.md5sum {
+                        e.emit_pair(b"md5sum", md5sum)?;
+                    }
+                }
+                InfoSpec::Dictionary(dict) => {
+                    e.emit_pair(b"files", &dict.files)?;
+                }
+            }
+            e.emit_pair(b"name", &self.name)?;
+            e.emit_pair(b"piece length", self.piece_length)?;
+            e.emit_pair(b"pieces", &self.pieces)?;
+            e.emit_pair(
+                b"private",
+                if self.private.unwrap_or(false) { 1 } else { 0 },
+            )?;
+            Ok(())
+        })
+    }
+}
+
+impl ToBencode for File {
+    const MAX_DEPTH: usize = 1;
+
+    fn encode(
+        &self,
+        encoder: bendy::encoding::SingleItemEncoder,
+    ) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"path", &self.path)?;
+            e.emit_pair(b"length", self.length)?;
+            if let Some(md5sum) = &self.md5sum {
+                e.emit_pair(b"md5sum", md5sum)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl FromBencode for Info {
     fn decode_bencode_object(
         object: bendy::decoding::Object,
     ) -> Result<Self, bendy::decoding::Error> {
@@ -39,20 +128,24 @@ impl<'a> FromBencode for Info<'a> {
                     piece_length = Some(i64::decode_bencode_object(value)?);
                 }
                 (b"pieces", value) => {
-                    pieces = Some(value.try_into_bytes()?);
+                    pieces = Some(value.try_into_bytes()?.to_vec());
                 }
                 (b"private", value) => {
                     private = Some(i64::decode_bencode_object(value)? == 1);
                 }
                 (b"name", value) => {
-                    name = Some(str::from_utf8(value.try_into_bytes()?)?);
+                    name = Some(CompactString::from(str::from_utf8(
+                        value.try_into_bytes()?,
+                    )?));
                 }
                 // Single file info fields
                 (b"length", value) => {
                     length = Some(i64::decode_bencode_object(value)?);
                 }
                 (b"md5sum", value) => {
-                    md5sum = Some(str::from_utf8(value.try_into_bytes()?)?);
+                    md5sum = Some(CompactString::from(str::from_utf8(
+                        value.try_into_bytes()?,
+                    )?));
                 }
                 // multi file info fields
                 (b"files", value) => {
@@ -69,10 +162,9 @@ impl<'a> FromBencode for Info<'a> {
                                     let mut path_values = vec![];
                                     let mut path_decoder = value.try_into_list()?;
                                     while let Some(path_elem) = path_decoder.next_object()? {
-                                        let path_elem =
-                                            str::from_utf8(path_elem.try_into_bytes()?)?;
-                                        let path_elem =
-                                            unsafe { std::mem::transmute::<&str, &str>(path_elem) };
+                                        let path_elem = CompactString::from(str::from_utf8(
+                                            path_elem.try_into_bytes()?,
+                                        )?);
                                         path_values.push(path_elem);
                                     }
                                     path = Some(path_values);
@@ -81,7 +173,9 @@ impl<'a> FromBencode for Info<'a> {
                                     length = Some(i64::decode_bencode_object(value)?);
                                 }
                                 (b"md5sum", value) => {
-                                    md5sum = Some(str::from_utf8(value.try_into_bytes()?)?);
+                                    md5sum = Some(CompactString::from(str::from_utf8(
+                                        value.try_into_bytes()?,
+                                    )?));
                                 }
                                 (unknown_key, _) => {
                                     return Err(bendy::decoding::Error::unexpected_field(
@@ -94,8 +188,6 @@ impl<'a> FromBencode for Info<'a> {
                             path.ok_or_else(|| bendy::decoding::Error::missing_field("path"))?;
                         let length = length
                             .ok_or_else(|| bendy::decoding::Error::missing_field("length"))?;
-                        let md5sum = md5sum
-                            .map(|md5sum| unsafe { std::mem::transmute::<_, &'a str>(md5sum) });
                         decoded_files.push(File {
                             path,
                             length,
@@ -111,15 +203,10 @@ impl<'a> FromBencode for Info<'a> {
                 }
             }
         }
-        let md5sum = md5sum.map(|md5sum| unsafe { std::mem::transmute::<&str, &'a str>(md5sum) });
         let piece_length =
             piece_length.ok_or_else(|| bendy::decoding::Error::missing_field("piece length"))?;
-        let name = name
-            .map(|name| unsafe { std::mem::transmute::<&str, &str>(name) })
-            .ok_or_else(|| bendy::decoding::Error::missing_field("name"))?;
-        let pieces = pieces
-            .map(|pieces| unsafe { std::mem::transmute::<&[u8], &'a [u8]>(pieces) })
-            .ok_or_else(|| bendy::decoding::Error::missing_field("pieces"))?;
+        let name = name.ok_or_else(|| bendy::decoding::Error::missing_field("name"))?;
+        let pieces = pieces.ok_or_else(|| bendy::decoding::Error::missing_field("pieces"))?;
         let info_spec = match ((length, md5sum), files) {
             ((Some(length), md5sum), None) => InfoSpec::Single(SingleInfo { length, md5sum }),
             ((None, None), Some(files)) => InfoSpec::Dictionary(DictionaryInfo { files }),
@@ -139,36 +226,69 @@ impl<'a> FromBencode for Info<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SingleInfo<'a> {
-    pub md5sum: Option<&'a str>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct SingleInfo {
+    pub md5sum: Option<CompactString>,
     pub length: i64,
 }
 
-#[derive(Debug, Clone)]
-pub struct DictionaryInfo<'a> {
-    pub files: Vec<File<'a>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct DictionaryInfo {
+    pub files: Vec<File>,
 }
 
-#[derive(Debug, Clone)]
-pub enum InfoSpec<'a> {
-    Single(SingleInfo<'a>),
-    Dictionary(DictionaryInfo<'a>),
+#[derive(Debug, Clone, PartialEq)]
+pub enum InfoSpec {
+    Single(SingleInfo),
+    Dictionary(DictionaryInfo),
 }
 
-#[derive(Debug, Clone)]
-pub struct MetaInfo<'a> {
-    pub info: Info<'a>,
-    pub announce: &'a str,
-    pub encoding: Option<&'a str>,
-    pub announce_list: Vec<Vec<&'a str>>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct MetaInfo {
+    pub info: Info,
+    pub announce: CompactString,
+    pub encoding: Option<CompactString>,
+    pub announce_list: Vec<Vec<CompactString>>,
     pub creation_date: Option<i64>,
-    pub comment: Option<&'a str>,
-    pub created_by: Option<&'a str>,
-    pub url_list: Vec<&'a str>,
+    pub comment: Option<CompactString>,
+    pub created_by: Option<CompactString>,
+    pub url_list: Vec<CompactString>,
 }
 
-impl<'a> FromBencode for MetaInfo<'a> {
+impl ToBencode for MetaInfo {
+    const MAX_DEPTH: usize = Info::MAX_DEPTH + 1;
+
+    fn encode(
+        &self,
+        encoder: bendy::encoding::SingleItemEncoder,
+    ) -> Result<(), bendy::encoding::Error> {
+        encoder.emit_dict(|mut e| {
+            e.emit_pair(b"announce", &self.announce)?;
+            if !self.announce_list.is_empty() {
+                e.emit_pair(b"announce-list", &self.announce_list)?;
+            }
+            if let Some(comment) = &self.comment {
+                e.emit_pair(b"comment", comment)?;
+            }
+            if let Some(created_by) = &self.created_by {
+                e.emit_pair(b"created by", created_by)?;
+            }
+            if let Some(creation_date) = self.creation_date {
+                e.emit_pair(b"creation date", creation_date)?;
+            }
+            if let Some(encoding) = &self.encoding {
+                e.emit_pair(b"encoding", encoding)?;
+            }
+            e.emit_pair(b"info", &self.info)?;
+            if !self.url_list.is_empty() {
+                e.emit_pair(b"url-list", &self.url_list)?;
+            }
+            Ok(())
+        })
+    }
+}
+
+impl FromBencode for MetaInfo {
     fn decode_bencode_object(
         object: bendy::decoding::Object,
     ) -> Result<Self, bendy::decoding::Error> {
@@ -189,10 +309,14 @@ impl<'a> FromBencode for MetaInfo<'a> {
                     info = Some(Info::decode_bencode_object(value)?);
                 }
                 (b"announce", value) => {
-                    announce = Some(str::from_utf8(value.try_into_bytes()?)?);
+                    announce = Some(CompactString::from(str::from_utf8(
+                        value.try_into_bytes()?,
+                    )?));
                 }
                 (b"encoding", value) => {
-                    encoding = Some(str::from_utf8(value.try_into_bytes()?)?);
+                    encoding = Some(CompactString::from(str::from_utf8(
+                        value.try_into_bytes()?,
+                    )?));
                 }
                 (b"announce-list", value) => {
                     let mut announce_list_values = vec![];
@@ -201,9 +325,9 @@ impl<'a> FromBencode for MetaInfo<'a> {
                         let mut list_decoder = value.try_into_list()?;
                         let mut inner_list = vec![];
                         while let Some(announce_elem) = list_decoder.next_object()? {
-                            let announce_elem = str::from_utf8(announce_elem.try_into_bytes()?)?;
-                            let announce_elem =
-                                unsafe { std::mem::transmute::<&str, &str>(announce_elem) };
+                            let announce_elem = CompactString::from(str::from_utf8(
+                                announce_elem.try_into_bytes()?,
+                            )?);
                             inner_list.push(announce_elem);
                         }
                         announce_list_values.push(inner_list);
@@ -214,17 +338,20 @@ impl<'a> FromBencode for MetaInfo<'a> {
                     creation_date = Some(i64::decode_bencode_object(value)?);
                 }
                 (b"comment", value) => {
-                    comment = Some(str::from_utf8(value.try_into_bytes()?)?);
+                    comment = Some(CompactString::from(str::from_utf8(
+                        value.try_into_bytes()?,
+                    )?));
                 }
                 (b"created by", value) => {
-                    created_by = Some(str::from_utf8(value.try_into_bytes()?)?);
+                    created_by = Some(CompactString::from(str::from_utf8(
+                        value.try_into_bytes()?,
+                    )?));
                 }
                 (b"url-list", value) => {
                     let mut url_list_values = vec![];
                     let mut url_list_decoder = value.try_into_list()?;
                     while let Some(value) = url_list_decoder.next_object()? {
-                        let url = str::from_utf8(value.try_into_bytes()?)?;
-                        let url = unsafe { std::mem::transmute::<&str, &str>(url) };
+                        let url = str::from_utf8(value.try_into_bytes()?)?.into();
                         url_list_values.push(url);
                     }
                     url_list = Some(url_list_values);
@@ -237,16 +364,9 @@ impl<'a> FromBencode for MetaInfo<'a> {
             }
         }
 
-        let info = info
-            .map(|info| unsafe { std::mem::transmute::<Info<'_>, Info<'_>>(info) })
-            .ok_or_else(|| bendy::decoding::Error::missing_field("info"))?;
-        let announce = announce
-            .map(|announce| unsafe { std::mem::transmute::<&str, &str>(announce) })
-            .ok_or_else(|| bendy::decoding::Error::missing_field("announce"))?;
+        let info = info.ok_or_else(|| bendy::decoding::Error::missing_field("info"))?;
+        let announce = announce.ok_or_else(|| bendy::decoding::Error::missing_field("announce"))?;
         let announce_list = announce_list.unwrap_or_default();
-        let encoding = encoding.map(|e| unsafe { std::mem::transmute::<_, &'a str>(e) });
-        let comment = comment.map(|c| unsafe { std::mem::transmute::<_, &'a str>(c) });
-        let created_by = created_by.map(|c| unsafe { std::mem::transmute::<_, &'a str>(c) });
         let url_list = url_list.unwrap_or_default();
 
         Ok(MetaInfo {
@@ -271,14 +391,17 @@ fn hash_binary(data: &[u8]) -> [u8; 20] {
 #[cfg(test)]
 mod test {
     use super::*;
+    use pretty_assertions::assert_eq;
 
-    #[tokio::test]
-    async fn test_fetch_torrent() {
-        let files = tokio::fs::read_dir(".").await.unwrap();
-        println!("{:?}", files);
-        let torrent_file = tokio::fs::read("./resources/debian.torrent").await.unwrap();
+    #[test]
+    fn test_fetch_torrent() {
+        let torrent_file = std::fs::read("../resources/debian.torrent").unwrap();
         let meta_info = MetaInfo::from_bencode(&torrent_file).unwrap();
-        drop(torrent_file);
         println!("{:?}", meta_info);
+        let encoded = meta_info.to_bencode().unwrap();
+        let meta_info2 = MetaInfo::from_bencode(&encoded).unwrap();
+        //println!("CHECKING EQUALITY?");
+        //assert_eq!(meta_info, meta_info2);
+        //assert_eq!(torrent_file, encoded);
     }
 }
