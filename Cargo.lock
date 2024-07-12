@@ -76,8 +76,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8133e404c8bec821e531f347dab1247bf64f60882826e7228f8ffeb33a35a658"
 dependencies = [
  "failure",
- "serde",
- "serde_bytes",
 ]
 
 [[package]]
@@ -524,6 +522,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d231dfb89cfffdbc30e7fc41579ed6066ad03abda9e567ccafae602b97ec5024"
 
 [[package]]
+name = "hex"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
+
+[[package]]
+name = "hex-literal"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fe2267d4ed49bc07b63801559be28c718ea06c4738b7a03c94df7386d2cde46"
+
+[[package]]
 name = "http"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -730,7 +740,10 @@ dependencies = [
  "bendy",
  "compact_str",
  "derive_builder",
+ "hex",
+ "hex-literal",
  "pretty_assertions",
+ "rand",
  "reqwest",
  "serde",
  "serde_bencode",

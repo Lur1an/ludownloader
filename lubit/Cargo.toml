@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bendy = { version = "0.3.3", features = ["serde"] }
+bendy = { version = "0.3.3" }
 compact_str = { version = "0.7.1", features = ["serde"] }
 derive_builder = "0.20.0"
+hex = "0.4.3"
+hex-literal = "0.4.1"
 pretty_assertions = "1.4.0"
-reqwest = { version = "0.12.5", features = ["json", "cookies", "gzip", "rustls-tls", "native-tls-vendored", "stream"] }
+rand = "0.8.5"
+reqwest = { version = "0.12.5", features = ["json", "cookies", "gzip", "rustls-tls", "native-tls-vendored", "stream", "http2"] }
 serde = { version = "1.0.203", features = ["derive"] }
 serde_bencode = "0.2.4"
 serde_bytes = "0.11.15"
